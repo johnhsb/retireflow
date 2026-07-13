@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>은퇴자산 현금흐름 시뮬레이터</title>
+<style>
+:root{
+  --bg:#F6F3EC;
+  --surface:#FFFFFF;
+  --surface-2:#EFE9DA;
+  --ink:#1C2B36;
+  --ink-soft:#5B6B77;
+  --ink-faint:#8B96A0;
+  --accent:#A9762C;
+  --accent-soft:#E9DCC0;
+  --positive:#2F5D50;
+  --positive-soft:#DCE8E3;
+  --negative:#AE4A3C;
+  --negative-soft:#F2DEDA;
+  --warning:#fab219;
+  --warning-soft:#FDF0D5;
+  --neutral:#8B96A0;
+  --neutral-soft:#E7E9EC;
+  --line:#DCD5C4;
+  --line-soft:#EAE5D8;
+  --radius:2px;
+  --serif:'Nanum Myeongjo','Noto Serif KR',Georgia,serif;
+  --sans:-apple-system,BlinkMacSystemFont,'Pretendard','Malgun Gothic','Apple SD Gothic Neo',sans-serif;
+  --mono:'SF Mono','Consolas','Menlo',monospace;
+}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font-family:var(--sans);}
+body{font-size:14px;line-height:1.5;}
+h1,h2,h3{font-family:var(--serif);font-weight:600;margin:0;}
+button{font-family:var(--sans);cursor:pointer;}
+input,select{font-family:var(--sans);}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums;}
+
+/* ---------- Layout ---------- */
+.app-header{
+  padding:28px 32px 22px;
+  border-bottom:1px solid var(--line);
+  background:var(--surface);
+}
+.app-header .eyebrow{
+  font-family:var(--mono);
+  font-size:11px;
+  letter-spacing:0.12em;
+  color:var(--accent);
+  text-transform:uppercase;
+  margin-bottom:6px;
+}
+.app-header h1{font-size:26px;color:var(--ink);}
+.app-header p{margin:6px 0 0;color:var(--ink-soft);font-size:13px;max-width:640px;}
+.privacy-note{
+  display:inline-flex;align-items:center;gap:6px;
+  margin-top:12px;padding:6px 12px;
+  border:1px solid var(--positive);border-radius:var(--radius);
+  background:var(--positive-soft);color:var(--positive);
+  font-size:11.5px;font-weight:600;max-width:640px;
+}
+
+.toolbar{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap;}
+.toolbar button{
+  border:1px solid var(--line);background:var(--surface);padding:8px 14px;
+  font-size:12px;font-weight:600;color:var(--ink);border-radius:var(--radius);
+}
+.toolbar button:hover{background:var(--surface-2);border-color:var(--accent);}
+
+/* 인쇄용 리포트 (평소엔 숨김, 인쇄시에만 노출) */
+.report-view{display:none;}
+@media print{
+  body > header, body > .layout{display:none !important;}
+  .report-view{display:block !important;}
+  body{background:#fff;}
+}
+.report-view{padding:20px;font-family:var(--sans);color:#111;}
+.report-view h1{font-size:20px;margin-bottom:4px;}
+.report-view .rp-sub{font-size:12px;color:#555;margin-bottom:18px;}
+.report-view table{width:100%;border-collapse:collapse;font-size:11px;margin-bottom:20px;}
+.report-view th,.report-view td{border:1px solid #ccc;padding:5px 7px;text-align:right;}
+.report-view th{background:#f0f0ea;text-align:center;}
+.report-view td:first-child,.report-view th:first-child{text-align:left;}
+.report-view .rp-section-title{font-size:13px;font-weight:700;margin:18px 0 8px;border-bottom:2px solid #333;padding-bottom:4px;}
+.report-view .rp-assumptions{font-size:11px;line-height:1.7;color:#333;}
+.report-view .rp-assumptions div{margin-bottom:2px;}
+.report-view table.rp-settings td{text-align:left;}
+.report-view table.rp-settings td:nth-child(1),.report-view table.rp-settings td:nth-child(3){color:#555;width:22%;}
+.report-view table.rp-settings th{background:#e4e0d2;text-align:left;padding:6px 7px;}
+.report-view table tr{page-break-inside:avoid;}
+.report-view .rp-section-title{page-break-after:avoid;}
+@media print{
+  .report-view table{page-break-inside:auto;}
+  .report-view thead, .report-view tr{page-break-inside:avoid;}
+}
+
+.layout{
+  display:grid;
+  grid-template-columns:340px 1fr;
+  min-height:calc(100vh - 96px);
+}
+@media (max-width:900px){
+  .layout{grid-template-columns:1fr;}
+}
+
+/* ---------- Sidebar ---------- */
+.sidebar{
+  background:var(--surface);
+  border-right:1px solid var(--line);
+  padding:18px 0 60px;
+  overflow-y:auto;
+}
+.acc-section{border-bottom:1px solid var(--line-soft);}
+.acc-head-row{
+  display:flex;align-items:center;gap:8px;
+  padding:14px 22px;
+}
+.acc-head{
+  flex:1;
+  display:flex;align-items:center;
+  padding:0;
+  background:none;border:none;
+  text-align:left;
+  font-size:13px;font-weight:700;
+  color:var(--ink);
+  letter-spacing:0.01em;
+  cursor:pointer;
+}
+.acc-head .idx{
+  font-family:var(--mono);color:var(--accent);margin-right:8px;font-weight:600;font-size:11px;
+}
+.acc-head .chev{color:var(--ink-faint);font-size:11px;transition:transform .15s ease;margin-left:8px;}
+.acc-section.open .chev{transform:rotate(90deg);}
+.sec-reset-btn{
+  flex:none;font-size:10.5px;color:var(--ink-faint);
+  background:none;border:1px solid var(--line);border-radius:var(--radius);
+  padding:4px 8px;cursor:pointer;
+}
+.sec-reset-btn:hover{border-color:var(--accent);color:var(--accent);}
+.acc-body{
+  padding:0 22px 18px;
+  display:none;
+}
+.acc-section.open .acc-body{display:block;}
+
+.field{margin-bottom:12px;}
+.field label{
+  display:flex;justify-content:space-between;
+  font-size:12px;color:var(--ink-soft);margin-bottom:5px;
+}
+.field label .val{font-family:var(--mono);color:var(--ink);font-weight:600;}
+.field .field-note{font-size:11px;color:var(--ink-soft);margin:-2px 0 5px;}
+.field input[type=range]{
+  width:100%;accent-color:var(--accent);
+}
+.field input[type=number],.field input[type=date],.field select{
+  width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:var(--radius);
+  background:var(--bg);font-size:13px;color:var(--ink);
+}
+.field.inline{display:flex;align-items:center;gap:8px;}
+.field.inline label{margin:0;flex:1;}
+.checkbox-row{
+  display:flex;align-items:center;gap:8px;margin-bottom:14px;
+  padding:8px 10px;background:var(--surface-2);border-radius:var(--radius);
+}
+.checkbox-row input{accent-color:var(--accent);}
+.checkbox-row span{font-size:12px;color:var(--ink);font-weight:600;}
+.subtle-note{font-size:11px;color:var(--ink-faint);margin-top:2px;line-height:1.4;}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+
+.info-icon{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:14px;height:14px;margin-left:5px;flex:none;
+  border:1px solid var(--ink-faint);border-radius:50%;
+  background:none;color:var(--ink-faint);
+  font-size:10px;line-height:1;cursor:pointer;padding:0;
+}
+.info-icon:hover{border-color:var(--accent);color:var(--accent);}
+.reset-icon{
+  align-items:center;justify-content:center;
+  width:14px;height:14px;margin-left:5px;flex:none;
+  border:1px solid var(--accent);border-radius:50%;
+  background:none;color:var(--accent);
+  font-size:10px;line-height:1;cursor:pointer;padding:0;
+}
+.reset-icon:hover{background:var(--accent-soft);}
+.info-popover{
+  display:none;position:fixed;z-index:50;width:300px;max-width:calc(100vw - 24px);
+  max-height:70vh;overflow-y:auto;
+  background:var(--ink);color:#fff;
+  padding:10px 12px;border-radius:2px;
+  font-size:11.5px;line-height:1.55;
+  box-shadow:0 4px 14px rgba(0,0,0,.22);
+}
+.info-popover-title{font-weight:700;color:var(--accent-soft);margin-bottom:4px;}
+.info-popover-body{color:#EFE9DA;white-space:pre-line;}
+
+/* ---------- Main ---------- */
+.main{padding:26px 34px 60px;overflow-x:hidden;}
+
+/* Timeline */
+.timeline-wrap{margin-bottom:26px;}
+.timeline-wrap h2{font-size:13px;color:var(--ink-soft);font-weight:700;margin-bottom:10px;letter-spacing:.02em;}
+.timeline{
+  position:relative;
+  display:flex;
+  height:56px;
+  border:1px solid var(--line);
+  background:var(--surface);
+  overflow:hidden;
+}
+.tl-seg{
+  position:relative;
+  display:flex;align-items:center;justify-content:center;
+  border-right:1px solid var(--line-soft);
+  font-size:11px;color:var(--ink-soft);
+  white-space:nowrap;overflow:hidden;
+  transition:background .15s ease;
+}
+.tl-seg:last-child{border-right:none;}
+.tl-seg b{color:var(--ink);font-weight:700;margin-right:4px;}
+.tl-seg.phase-work{background:var(--accent-soft);}
+.tl-seg.phase-voluntary{background:#E4ECE8;}
+.tl-seg.phase-region{background:var(--surface);}
+.tl-seg.phase-downsize{background:var(--negative-soft);}
+.tl-seg.phase-nps{background:var(--positive-soft);}
+
+/* KPI cards */
+.kpi-row{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:28px;
+}
+@media (max-width:900px){.kpi-row{grid-template-columns:repeat(2,1fr);}}
+.kpi{
+  background:var(--surface);border:1px solid var(--line);padding:16px 18px;
+}
+.kpi .label{font-size:11px;color:var(--ink-soft);letter-spacing:.02em;margin-bottom:8px;}
+.kpi .value{font-family:var(--mono);font-size:22px;font-weight:700;color:var(--ink);}
+.kpi .value small{font-size:12px;font-weight:500;color:var(--ink-faint);}
+.kpi .sub{font-size:11px;color:var(--ink-faint);margin-top:4px;}
+.kpi.kpi-alert{border-color:var(--negative);background:var(--negative-soft);}
+.kpi.kpi-alert .value{color:var(--negative);}
+
+/* Chart */
+.chart-card{
+  background:var(--surface);border:1px solid var(--line);padding:20px 22px 12px;margin-bottom:28px;
+}
+.chart-card h2{font-size:13px;color:var(--ink-soft);font-weight:700;margin-bottom:4px;letter-spacing:.02em;}
+.chart-legend{display:flex;gap:16px;font-size:11px;color:var(--ink-soft);margin-bottom:8px;}
+.chart-legend span{display:inline-flex;align-items:center;gap:5px;}
+.chart-legend i{width:10px;height:10px;display:inline-block;border-radius:1px;}
+canvas{width:100%;display:block;}
+.chart-wrap{position:relative;}
+.chart-tooltip{
+  position:absolute;pointer-events:none;
+  background:var(--ink);color:#fff;font-family:var(--mono);font-size:11px;
+  padding:8px 10px;border-radius:2px;white-space:normal;max-width:250px;
+  transform:translate(-50%,-110%);
+  opacity:0;transition:opacity .08s ease;
+  z-index:5;line-height:1.5;
+}
+.chart-tooltip.show{opacity:1;}
+.chart-tooltip .tt-title{font-weight:700;color:var(--accent-soft);margin-bottom:2px;}
+.chart-tooltip .tt-sub{color:#B9C2C9;font-size:10px;}
+.chart-tooltip .tt-alert{
+  color:#F5C860;margin-top:5px;padding-top:5px;
+  border-top:1px solid rgba(255,255,255,.18);font-size:10.5px;line-height:1.5;
+}
+.chart-crosshair{
+  position:absolute;top:0;bottom:0;width:1px;background:var(--ink-faint);
+  opacity:0;pointer-events:none;
+}
+.chart-crosshair.show{opacity:.5;}
+
+/* Monthly table */
+.table-card{
+  background:var(--surface);border:1px solid var(--line);
+}
+.table-head{
+  display:flex;justify-content:space-between;align-items:center;
+  padding:16px 22px;border-bottom:1px solid var(--line);
+}
+.table-head h2{font-size:13px;color:var(--ink-soft);font-weight:700;letter-spacing:.02em;}
+.year-nav{display:flex;align-items:center;gap:10px;}
+.year-nav button{
+  border:1px solid var(--line);background:var(--surface);width:28px;height:28px;
+  color:var(--ink);font-size:14px;
+}
+.year-nav button:hover{background:var(--surface-2);}
+.year-nav select{
+  border:1px solid var(--line);padding:6px 10px;background:var(--bg);font-size:13px;font-weight:700;
+  font-family:var(--mono);color:var(--ink);
+}
+.table-scroll{overflow-x:auto;}
+table.monthly{width:100%;border-collapse:collapse;font-size:12px;min-width:920px;}
+table.monthly th, table.monthly td{
+  padding:8px 10px;text-align:right;border-bottom:1px solid var(--line-soft);white-space:nowrap;
+}
+table.monthly th:first-child, table.monthly td:first-child{text-align:left;position:sticky;left:0;background:var(--surface);}
+table.monthly thead th{
+  background:var(--surface-2);color:var(--ink-soft);font-weight:700;font-size:11px;
+  position:sticky;top:0;z-index:2;
+}
+table.monthly thead th:first-child{z-index:3;}
+table.monthly tbody tr:hover td{background:#FBF9F4;}
+table.monthly td.num{font-family:var(--mono);}
+table.monthly td.neg{color:var(--negative);}
+table.monthly td.pos-strong{color:var(--positive);font-weight:700;}
+table.monthly tfoot td{
+  font-weight:700;border-top:2px solid var(--ink);border-bottom:none;background:var(--surface-2);
+}
+.badge{
+  display:inline-block;font-size:10px;padding:2px 6px;border-radius:2px;
+  background:var(--accent-soft);color:var(--accent);font-weight:700;margin-left:6px;
+}
+.badge.region{background:var(--surface-2);color:var(--ink-soft);}
+.badge.voluntary{background:#E4ECE8;color:var(--positive);}
+.badge.work{background:var(--accent-soft);color:var(--accent);}
+
+.footnote{
+  font-size:11px;color:var(--ink-faint);line-height:1.6;margin-top:22px;padding-top:16px;border-top:1px solid var(--line);
+}
+
+.target-banner{
+  display:flex;align-items:center;gap:8px;
+  padding:10px 22px;font-size:12px;border-bottom:1px solid var(--line);
+}
+.target-banner.short{background:var(--negative-soft);color:#7A3226;}
+.target-banner.ok{background:var(--positive-soft);color:#1E4038;}
+
+</style>
+</head>
+<body>
+
+<header class="app-header">
+  <div class="eyebrow">RETIREMENT CASH FLOW LEDGER</div>
+  <h1>은퇴자산 현금흐름 시뮬레이터</h1>
+  <p>퇴직연금·개인연금·국민연금·재취업·실업급여·건강보험·주택 다운사이징까지 반영한 월별 현금흐름 추정 도구입니다. 좌측 변수를 조정하면 즉시 재계산됩니다.</p>
+  <p class="privacy-note">모든 계산은 이 브라우저 안에서만 처리됩니다. 입력하신 정보는 외부 서버로 전송되거나 저장되지 않습니다.</p>
+  <div class="toolbar">
+    <button id="btnSave">설정 저장</button>
+    <button id="btnLoad">설정 불러오기</button>
+    <input type="file" id="fileLoad" accept="application/json" style="display:none;">
+    <button id="btnExcel">엑셀 다운로드</button>
+    <button id="btnReport">리포트 인쇄</button>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main class="main">
+    <div class="timeline-wrap">
+      <h2>생애주기 타임라인</h2>
+      <div class="timeline" id="timeline"></div>
+    </div>
+
+    <div class="kpi-row" id="kpiRow"></div>
+
+    <div class="chart-card">
+      <h2>월별 수입·지출·순현금흐름 추이 (전체 기간)</h2>
+      <div class="chart-legend">
+        <span><i style="background:#2FA88A"></i>총수입</span>
+        <span><i style="background:#D9853F"></i>총세금·공과금</span>
+        <span><i style="background:#3D7AB8"></i>세후 순현금흐름</span>
+        <span><i style="background:var(--neutral-soft);border:1px solid var(--neutral);"></i>한도초과 과세 연도</span>
+      </div>
+      <div class="chart-wrap">
+        <canvas id="annualChart" height="280"></canvas>
+        <div class="chart-crosshair" id="chartCrosshair"></div>
+        <div class="chart-tooltip" id="chartTooltip"></div>
+      </div>
+    </div>
+
+    <div class="table-card">
+      <div class="table-head">
+        <h2 id="monthlyTitle">월별 현금흐름</h2>
+        <div class="year-nav">
+          <button id="prevYear">‹</button>
+          <select id="yearSelect"></select>
+          <button id="nextYear">›</button>
+        </div>
+      </div>
+      <div class="target-banner" id="pensionLimitBanner" style="display:none;"></div>
+      <div class="table-scroll">
+        <table class="monthly" id="monthlyTable"></table>
+      </div>
+    </div>
+
+    <div class="footnote" id="footnote"></div>
+  </main>
+</div>
+
+<div class="report-view" id="reportView"></div>
+<div class="info-popover" id="infoPopover"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="engine.js"></script>
+<script src="ui.js"></script>
+</body>
+</html>
