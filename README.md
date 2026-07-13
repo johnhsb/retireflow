@@ -14,15 +14,15 @@
 - 설정 저장/불러오기(JSON), 엑셀 다운로드, 인쇄용 리포트
 
 ## 온라인에서 바로 사용하기
-- https://johnhsb.github.io/retirement_simulator/
+- https://johnhsb.github.io/retireflow/
 
 ## 사용 방법
 `retirement_simulator_bundled.html` 파일을 브라우저로 열면 바로 사용할 수 있습니다.
 (`index.html`, `engine.js`, `ui.js`를 함께 두고 index.html을 열어도 동일하게 동작합니다.)
 
 파일을 내려받으려면 아래 raw 링크를 우클릭(모바일은 길게 누르기) 후 "다른 이름으로 링크 저장"을 선택하세요.
-- https://raw.githubusercontent.com/johnhsb/retirement_simulator/master/retirement_simulator_bundled.html
-- https://raw.githubusercontent.com/johnhsb/retirement_simulator/master/index.html
+- https://raw.githubusercontent.com/johnhsb/retireflow/main/retirement_simulator_bundled.html
+- https://raw.githubusercontent.com/johnhsb/retireflow/main/index.html
 
 ## 처음 사용하시는 분은
 입력 항목별 설명과 전제사항을 정리한 [사용 가이드](GUIDE.md)를 참고하세요.
