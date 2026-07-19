@@ -688,34 +688,42 @@ function calcYear(year, params, dcPrincipalStart, dcGainStart, personalNonDeduct
   const personalWithinLimit = personalAlloc.within[1];  // 한도이내분만 정상 연금소득세/종합과세 판단 대상
 
   // ---- 국민연금 (조기수령 -5~0 / 연기수령 0~+5, 출생연도별 정상수령연령 기준) ----
-  let npsAnnual = 0;
+  let npsMonthlyFull = 0;
   const npsAdjustYears = params.npsAdjustYears || 0;
-  const npsStartAge = npsNormalAge(params.birthYear) + npsAdjustYears;
+  const npsNormAge = npsNormalAge(params.birthYear);
+  const npsStartAge = npsNormAge + npsAdjustYears;
   if (params.npsEnabled && age >= npsStartAge) {
     const yrsSinceStart = age - npsStartAge;
     const adjustFactor = npsAdjustYears >= 0
       ? 1 + 0.072 * npsAdjustYears   // 연기수령: 연 7.2% 가산
       : 1 - 0.06 * Math.abs(npsAdjustYears); // 조기수령: 연 6% 감액
     const npsBase = params.npsNormal63 * Math.max(0, adjustFactor);
-    npsAnnual = npsBase * Math.pow(1 + infl, yrsSinceStart) * 12;
+    npsMonthlyFull = npsBase * Math.pow(1 + infl, yrsSinceStart);
   }
+  // 조기노령연금 지급정지: 정상수령나이 도달 전(조기수령 중)에 소득 있는 업무(재취업)에 종사하는 달은 국민연금 전액 지급정지
+  // 근거: 국민연금법 제63조 — 정상수령나이 이후의 소득활동에 따른 감액(제63조의2, 최대 50%)은 별도이며 미반영
+  const npsEarlySuspendApplies = npsAdjustYears < 0 && age < npsNormAge;
 
   const monthlyWage = params.workEnabled ? params.workSalary / 12 : 0;
-  let earnedAnnual = 0, unemploymentAnnual = 0;
+  let earnedAnnual = 0, unemploymentAnnual = 0, npsAnnual = 0;
   const monthStatus = [];
   const monthEarned = [];
   const monthUnemp = [];
+  const monthNps = [];
   for (let m = 1; m <= 12; m++) {
     const employed = isEmployedMonth(year, m, params);
     const voluntary = isVoluntaryMonth(year, m, params);
     const unemp = isUnemploymentMonth(year, m, params);
     const e = employed ? params.workSalary / 12 : 0;
     const u = unemp ? params.unempMonthly : 0;
+    const n = (npsEarlySuspendApplies && employed) ? 0 : npsMonthlyFull;
     monthEarned.push(e);
     monthUnemp.push(u);
+    monthNps.push(n);
     monthStatus.push(employed ? 'work' : (voluntary ? 'voluntary' : 'region'));
     earnedAnnual += e;
     unemploymentAnnual += u;
+    npsAnnual += n;
   }
   const isWorking = earnedAnnual > 0;
 
@@ -737,11 +745,7 @@ function calcYear(year, params, dcPrincipalStart, dcGainStart, personalNonDeduct
   const earnedDed = earnedIncomeDeduction(earnedAnnual);
   const earnedIncome = Math.max(0, earnedAnnual - earnedDed);
 
-  // 경로우대공제: 본인이 만 70세 이상이면 100만원 추가공제 (근거: 소득세법 제51조제1항제3호)
-  // 배우자 등 다른 인적공제 대상자의 생년은 입력받지 않아, 본인분만 반영합니다.
-  const elderlyDeduction = age >= 70 ? 100 : 0;
-
-  const combinedBase = Math.max(0, pensionIncome + earnedIncome - 150 * params.dependents - elderlyDeduction);
+  const combinedBase = Math.max(0, pensionIncome + earnedIncome - 150 * params.dependents);
   const taxGlobalAll = globalTax(combinedBase);
 
   // 사적연금 분리과세 대안세율: 1500만원 이하 확정기간형 기준 연령별 저율(55~69세 5.5%, 70~79세 4.4%, 80세이상 3.3%),
@@ -754,7 +758,7 @@ function calcYear(year, params, dcPrincipalStart, dcGainStart, personalNonDeduct
   // 분리과세 선택 시에도 국민연금(공적연금)은 항상 종합과세 대상이라 근로소득과 합산
   const npsDed = pensionIncomeDeduction(npsAnnual);
   const npsIncome = Math.max(0, npsAnnual - npsDed);
-  const altGlobalBase = Math.max(0, npsIncome + earnedIncome - 150 * params.dependents - elderlyDeduction);
+  const altGlobalBase = Math.max(0, npsIncome + earnedIncome - 150 * params.dependents);
   const taxAlt = globalTax(altGlobalBase) + sepTax;
 
   const chosenGlobal = taxGlobalAll <= taxAlt;
@@ -817,7 +821,7 @@ function calcYear(year, params, dcPrincipalStart, dcGainStart, personalNonDeduct
     personalBalanceEnd: personalNonDeductibleBalanceEnd + personalTaxableBalanceEnd,
     dcDepletedMonth: dcWalk.depletedMonth, personalDepletedMonth: personalWalk.depletedMonth,
     _monthStatus: monthStatus, _monthEarned: monthEarned, _monthUnemp: monthUnemp, _monthNhis: monthNhis,
-    _monthDc: dcWalk.monthlyActual, _monthPersonal: personalWalk.monthlyActual
+    _monthDc: dcWalk.monthlyActual, _monthPersonal: personalWalk.monthlyActual, _monthNps: monthNps
   };
 }
 
@@ -855,7 +859,7 @@ function buildMonthly(yearResult, params) {
       month: m,
       dc: yearResult._monthDc[m - 1],
       personal: yearResult._monthPersonal[m - 1],
-      nps: yearResult.npsAnnual / 12,
+      nps: yearResult._monthNps[m - 1],
       earned: yearResult._monthEarned[m - 1],
       unemployment: yearResult._monthUnemp[m - 1],
       taxRetire: yearResult.taxRetire / 12,
@@ -958,7 +962,7 @@ const SECTIONS = [
       { key: 'birthYear', label: '생년(년)', type: 'number', min: 1950, max: 1990, step: 1,
         help: '만 나이 계산과 국민연금 수령 개시 연령 판정의 기준이 됩니다.' },
       { key: 'dependents', label: '인적공제 대상자 수(본인 포함)', type: 'range', min: 1, max: 6, step: 1, unit: '명',
-        help: '종합소득세 계산 시 적용되는 인적공제 대상자 수입니다(본인 포함).\n근거: 소득세법 제50조(인적공제)\n산출: 종합소득금액 - (150만원 × 인원수) - 경로우대공제 = 과세표준\n경로우대공제(소득세법 제51조): 본인이 만 70세 이상인 해에는 100만원이 자동으로 추가공제됩니다. 배우자 등 다른 인적공제 대상자는 생년 정보를 입력받지 않아 이 공제에는 반영되지 않습니다.' },
+        help: '종합소득세 계산 시 적용되는 인적공제 대상자 수입니다(본인 포함).\n근거: 소득세법 제50조(인적공제)\n산출: 종합소득금액 - (150만원 × 인원수) = 과세표준\n참고: 만 70세 이상에게 적용되는 경로우대공제(소득세법 제51조, 1인당 연 100만원)는 월별 현금흐름에 미치는 영향이 작아 이 시뮬레이터에는 반영하지 않았습니다. 실제로는 이 금액만큼 세금이 더 낮아질 수 있습니다.' },
       { key: 'startYear', label: '시뮬레이션 시작연도', type: 'number', min: 2020, max: 2050, step: 1,
         help: '현금흐름을 계산할 기간의 시작연도입니다.' },
       { key: 'endYear', label: '시뮬레이션 종료연도', type: 'number', min: 2020, max: 2060, step: 1,
@@ -1016,7 +1020,7 @@ const SECTIONS = [
         note: (s) => `${s.birthYear}년생 정상수령 나이: 만 ${npsNormalAge(s.birthYear)}세`,
         help: '국민연금공단에서 안내받은 정상수령 나이(생년에 따라 만 61~65세, 좌측 생년 입력값 기준 자동 판정) 시점의 예상 월 수령액입니다. 이 금액은 수령 개시 시점의 명목 금액으로 간주되어 이후 매년 물가상승률만큼 자동 인상됩니다. 국민연금공단 조회 화면에서 "오늘 기준 현재가치"로 안내받은 금액을 그대로 입력하면 실제보다 낮게 계산될 수 있습니다.\n근거: 국민연금법 제51조(급여액의 조정) — 매년 전국소비자물가변동률을 반영해 연금액을 인상\n산출: 수령개시 이후 (1+물가상승률)^경과연수를 곱해 자동 인상' },
       { key: 'npsAdjustYears', label: '조기(-)/연기(+) 연수 (조기 최대-5, 연기 최대+5)', type: 'range', min: -5, max: 5, step: 1, unit: '년',
-        help: '조기수령은 1년당 6% 감액(최대 5년, -30%), 연기수령은 1년당 7.2% 가산(최대 5년, +36%)되며, 위 정상수령액에 적용됩니다.\n근거: 국민연금법 제61조(조기노령연금)·제62조(연기연금)' }
+        help: '조기수령은 1년당 6% 감액(최대 5년, -30%), 연기수령은 1년당 7.2% 가산(최대 5년, +36%)되며, 위 정상수령액에 적용됩니다.\n근거: 국민연금법 제61조(조기노령연금)·제62조(연기연금)\n조기수령 중 재취업 반영: 조기수령을 선택하고 정상수령나이 도달 전에 재취업(근로소득)이 겹치는 달은 국민연금이 전액 지급정지로 자동 반영됩니다(국민연금법 제63조).\n미반영: 정상수령나이 도달 후 5년 이내에 소득이 있는 업무에 종사하는 경우의 부분 감액(제63조의2, 소득 수준별 최대 50%)은 반영되지 않았습니다.' }
     ]
   },
   {
@@ -1033,7 +1037,7 @@ const SECTIONS = [
       { key: 'workEndMonth', label: '재취업 종료 월', type: 'number', min: 1, max: 12,
         help: '재취업 근무 종료 월입니다.' },
       { key: 'workSalary', label: '재취업 연봉', type: 'range', min: 0, max: 12000, step: 100, unit: '만원',
-        help: '세전 연봉(총급여) 기준으로 입력하세요.\n근거: 소득세법 제47조(근로소득공제)\n산출: 500만원 이하 70% / 1,500만원 이하 350만원+초과분의 40% / 4,500만원 이하 950만원+초과분의 15% / 1억원 이하 1,425만원+초과분의 5% / 1억원 초과 1,725만원+초과분의 2% 공제 후 종합과세\n참고: 근로소득세액공제(소득세법 제59조, 총급여 구간별 연 20만~74만원)는 월별 현금흐름에 미치는 영향이 작아 이 시뮬레이터에는 반영하지 않았습니다. 실제로는 이 금액만큼 재취업 기간 소득세가 더 낮아질 수 있습니다.' },
+        help: '세전 연봉(총급여) 기준으로 입력하세요.\n근거: 소득세법 제47조(근로소득공제)\n산출: 500만원 이하 70% / 1,500만원 이하 350만원+초과분의 40% / 4,500만원 이하 950만원+초과분의 15% / 1억원 이하 1,425만원+초과분의 5% / 1억원 초과 1,725만원+초과분의 2% 공제 후 종합과세\n참고: 근로소득세액공제(소득세법 제59조, 총급여 구간별 연 20만~74만원)와 표준세액공제(근로소득자 13만원 등)는 월별 현금흐름에 미치는 영향이 작아 이 시뮬레이터에는 반영하지 않았습니다. 실제로는 이 금액만큼 재취업 기간 소득세가 더 낮아질 수 있습니다.' },
       { key: 'unempEnabled', label: '실업급여 반영 (재취업 종료월 다음달부터 자동)', type: 'checkbox',
         help: '재취업을 반영한 경우에만 의미가 있으며, 재취업 종료월 다음 달부터 자동으로 지급이 시작됩니다.' },
       { key: 'unempMonths', label: '실업급여 수령 개월수 (법정 최대 270일=9개월)', type: 'range', min: 0, max: 9, step: 1, unit: '개월',
@@ -1598,8 +1602,8 @@ function renderFootnote() {
     인출 시 세금 성격이 다른 재원은 비례배분이 아니라 <b>법정 순서(소득세법 시행령 제40조의3)</b>대로 소진됩니다: DC퇴직연금은 원금(이연퇴직소득)이 먼저, 운용수익이 나중에 인출되며, 개인연금은 세액공제 받지 않은 원금(비과세)이 먼저, 세액공제받은 원금+운용수익이 나중에 인출됩니다.
     DC퇴직연금 원금(이연퇴직소득) 부분의 이연퇴직소득세 감면율은 연금 실제 수령연차 10년 이하 30%, 10년 초과 40%이며, 별도 입력 없이 수령연차에 따라 자동으로 전환 적용됩니다.
     한도이내 사적연금소득(DC 운용수익+개인연금 과세대상분, 국민연금 제외)이 연 1,500만원 이하면 연령별 저율(55~69세 5.5%/70~79세 4.4%/80세이상 3.3%)로 분리과세되지만, 1,500만원을 단 1원이라도 초과하면 이 저율 혜택이 수령액 전체에서 사라지고 전액을 기준으로 16.5% 분리과세와 종합과세(6.6~49.5%) 중 유리한 쪽을 선택합니다.
-    종합소득세 계산 시 본인이 만 70세 이상인 해에는 <b>경로우대공제 100만원</b>이 인적공제(150만원×인원수)에 더해 자동 반영됩니다(배우자 등 다른 인적공제 대상자의 경로우대는 생년 정보가 없어 미반영).
-    재취업 근로소득에 적용되는 <b>근로소득세액공제(총급여 구간별 연 20만~74만원)</b>는 월별 현금흐름에 미치는 영향이 작아 반영하지 않았습니다. 실제로는 재취업 기간 소득세가 이 금액만큼 더 낮아질 수 있습니다.
+    만 70세 이상에게 적용되는 <b>경로우대공제(연 100만원)</b>, 재취업 근로소득에 적용되는 <b>근로소득세액공제(총급여 구간별 연 20만~74만원)</b>와 <b>표준세액공제</b>는 월별 현금흐름에 미치는 영향이 작아 반영하지 않았습니다. 실제로는 이 금액만큼 세금이 더 낮아질 수 있습니다.
+    <b>조기수령 중 재취업이 겹치는 달은 국민연금이 전액 지급정지</b>로 자동 반영됩니다(국민연금법 제63조). 다만 정상수령나이 도달 후 5년 이내 소득 있는 업무 종사 시의 부분 감액(제63조의2, 최대 50%)은 미반영입니다.
     각 입력 항목의 ⓘ 아이콘을 클릭하면 해당 항목의 상세 설명과 전제사항을 확인할 수 있습니다.
     정확한 세액·보험료는 세무사·국민건강보험공단·국민연금공단 상담을 통해 확인하시기 바랍니다.
     <div style="margin-top:10px;">© 2026 현수복. All rights reserved.</div>
@@ -1817,8 +1821,8 @@ function buildReport() {
       <div>인출 재원은 비례배분이 아니라 법정 순서(소득세법 시행령 제40조의3)대로 소진됩니다: DC퇴직연금은 원금(이연퇴직소득)이 먼저·운용수익이 나중, 개인연금은 세액공제 받지 않은 원금(비과세)이 먼저·세액공제받은 원금+운용수익이 나중입니다.</div>
       <div>DC퇴직연금 원금(이연퇴직소득) 부분의 이연퇴직소득세 감면율은 연금 실제 수령연차 10년 이하 30%, 10년 초과 40%이며, 수령연차에 따라 자동 전환 적용됩니다.</div>
       <div>한도이내 사적연금소득(DC 운용수익+개인연금 과세대상분, 국민연금 제외)이 연 1,500만원 이하면 연령별 저율(55~69세 5.5%/70~79세 4.4%/80세이상 3.3%), 초과하면 전액 16.5%로 분리과세한 세액과 종합과세 세액 중 낮은 쪽이 자동 적용됩니다.</div>
-      <div>종합소득세 계산 시 본인이 만 70세 이상인 해에는 경로우대공제 100만원이 인적공제에 더해 자동 반영됩니다(다른 인적공제 대상자의 경로우대는 생년 정보가 없어 미반영).</div>
-      <div>재취업 근로소득에 적용되는 근로소득세액공제(총급여 구간별 연 20만~74만원)는 월별 현금흐름에 미치는 영향이 작아 반영하지 않았습니다. 실제로는 재취업 기간 소득세가 이 금액만큼 더 낮아질 수 있습니다.</div>
+      <div>만 70세 이상에게 적용되는 경로우대공제(연 100만원), 재취업 근로소득에 적용되는 근로소득세액공제(총급여 구간별 연 20만~74만원)와 표준세액공제는 월별 현금흐름에 미치는 영향이 작아 반영하지 않았습니다. 실제로는 이 금액만큼 세금이 더 낮아질 수 있습니다.</div>
+      <div>조기수령 중 재취업이 겹치는 달은 국민연금이 전액 지급정지로 자동 반영됩니다(국민연금법 제63조). 정상수령나이 도달 후 5년 이내 소득 있는 업무 종사 시의 부분 감액(제63조의2, 최대 50%)은 미반영입니다.</div>
       <div>실업급여(구직급여) 최대 수령기간은 법정 270일(9개월) 기준입니다.</div>
       <div>정확한 세액·보험료는 세무사·국민건강보험공단·국민연금공단 상담을 통해 최종 확인하시기 바랍니다. 월별 상세 현금흐름은 엑셀 다운로드 기능으로 확인할 수 있습니다.</div>
     </div>

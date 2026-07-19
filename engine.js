@@ -291,34 +291,42 @@ function calcYear(year, params, dcPrincipalStart, dcGainStart, personalNonDeduct
   const personalWithinLimit = personalAlloc.within[1];  // 한도이내분만 정상 연금소득세/종합과세 판단 대상
 
   // ---- 국민연금 (조기수령 -5~0 / 연기수령 0~+5, 출생연도별 정상수령연령 기준) ----
-  let npsAnnual = 0;
+  let npsMonthlyFull = 0;
   const npsAdjustYears = params.npsAdjustYears || 0;
-  const npsStartAge = npsNormalAge(params.birthYear) + npsAdjustYears;
+  const npsNormAge = npsNormalAge(params.birthYear);
+  const npsStartAge = npsNormAge + npsAdjustYears;
   if (params.npsEnabled && age >= npsStartAge) {
     const yrsSinceStart = age - npsStartAge;
     const adjustFactor = npsAdjustYears >= 0
       ? 1 + 0.072 * npsAdjustYears   // 연기수령: 연 7.2% 가산
       : 1 - 0.06 * Math.abs(npsAdjustYears); // 조기수령: 연 6% 감액
     const npsBase = params.npsNormal63 * Math.max(0, adjustFactor);
-    npsAnnual = npsBase * Math.pow(1 + infl, yrsSinceStart) * 12;
+    npsMonthlyFull = npsBase * Math.pow(1 + infl, yrsSinceStart);
   }
+  // 조기노령연금 지급정지: 정상수령나이 도달 전(조기수령 중)에 소득 있는 업무(재취업)에 종사하는 달은 국민연금 전액 지급정지
+  // 근거: 국민연금법 제63조 — 정상수령나이 이후의 소득활동에 따른 감액(제63조의2, 최대 50%)은 별도이며 미반영
+  const npsEarlySuspendApplies = npsAdjustYears < 0 && age < npsNormAge;
 
   const monthlyWage = params.workEnabled ? params.workSalary / 12 : 0;
-  let earnedAnnual = 0, unemploymentAnnual = 0;
+  let earnedAnnual = 0, unemploymentAnnual = 0, npsAnnual = 0;
   const monthStatus = [];
   const monthEarned = [];
   const monthUnemp = [];
+  const monthNps = [];
   for (let m = 1; m <= 12; m++) {
     const employed = isEmployedMonth(year, m, params);
     const voluntary = isVoluntaryMonth(year, m, params);
     const unemp = isUnemploymentMonth(year, m, params);
     const e = employed ? params.workSalary / 12 : 0;
     const u = unemp ? params.unempMonthly : 0;
+    const n = (npsEarlySuspendApplies && employed) ? 0 : npsMonthlyFull;
     monthEarned.push(e);
     monthUnemp.push(u);
+    monthNps.push(n);
     monthStatus.push(employed ? 'work' : (voluntary ? 'voluntary' : 'region'));
     earnedAnnual += e;
     unemploymentAnnual += u;
+    npsAnnual += n;
   }
   const isWorking = earnedAnnual > 0;
 
@@ -340,11 +348,7 @@ function calcYear(year, params, dcPrincipalStart, dcGainStart, personalNonDeduct
   const earnedDed = earnedIncomeDeduction(earnedAnnual);
   const earnedIncome = Math.max(0, earnedAnnual - earnedDed);
 
-  // 경로우대공제: 본인이 만 70세 이상이면 100만원 추가공제 (근거: 소득세법 제51조제1항제3호)
-  // 배우자 등 다른 인적공제 대상자의 생년은 입력받지 않아, 본인분만 반영합니다.
-  const elderlyDeduction = age >= 70 ? 100 : 0;
-
-  const combinedBase = Math.max(0, pensionIncome + earnedIncome - 150 * params.dependents - elderlyDeduction);
+  const combinedBase = Math.max(0, pensionIncome + earnedIncome - 150 * params.dependents);
   const taxGlobalAll = globalTax(combinedBase);
 
   // 사적연금 분리과세 대안세율: 1500만원 이하 확정기간형 기준 연령별 저율(55~69세 5.5%, 70~79세 4.4%, 80세이상 3.3%),
@@ -357,7 +361,7 @@ function calcYear(year, params, dcPrincipalStart, dcGainStart, personalNonDeduct
   // 분리과세 선택 시에도 국민연금(공적연금)은 항상 종합과세 대상이라 근로소득과 합산
   const npsDed = pensionIncomeDeduction(npsAnnual);
   const npsIncome = Math.max(0, npsAnnual - npsDed);
-  const altGlobalBase = Math.max(0, npsIncome + earnedIncome - 150 * params.dependents - elderlyDeduction);
+  const altGlobalBase = Math.max(0, npsIncome + earnedIncome - 150 * params.dependents);
   const taxAlt = globalTax(altGlobalBase) + sepTax;
 
   const chosenGlobal = taxGlobalAll <= taxAlt;
@@ -420,7 +424,7 @@ function calcYear(year, params, dcPrincipalStart, dcGainStart, personalNonDeduct
     personalBalanceEnd: personalNonDeductibleBalanceEnd + personalTaxableBalanceEnd,
     dcDepletedMonth: dcWalk.depletedMonth, personalDepletedMonth: personalWalk.depletedMonth,
     _monthStatus: monthStatus, _monthEarned: monthEarned, _monthUnemp: monthUnemp, _monthNhis: monthNhis,
-    _monthDc: dcWalk.monthlyActual, _monthPersonal: personalWalk.monthlyActual
+    _monthDc: dcWalk.monthlyActual, _monthPersonal: personalWalk.monthlyActual, _monthNps: monthNps
   };
 }
 
@@ -458,7 +462,7 @@ function buildMonthly(yearResult, params) {
       month: m,
       dc: yearResult._monthDc[m - 1],
       personal: yearResult._monthPersonal[m - 1],
-      nps: yearResult.npsAnnual / 12,
+      nps: yearResult._monthNps[m - 1],
       earned: yearResult._monthEarned[m - 1],
       unemployment: yearResult._monthUnemp[m - 1],
       taxRetire: yearResult.taxRetire / 12,
