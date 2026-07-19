@@ -342,10 +342,10 @@ function calcYear(year, params, dcPrincipalStart, dcGainStart, personalNonDeduct
   const taxRetire = principalPart * effRateObj.reduced + dcExcessPrincipal * effRateObj.full;
   const taxRetireLocal = taxRetire * 0.1;
 
-  // 연금수령한도 초과분(운용수익분+개인연금분) - 16.5% 기타소득세(분리과세, 종합/분리 선택대상 아님)
+  // 연금수령한도 초과분(운용수익분+개인연금분) - 기타소득세 16.5%(분리과세, 종합/분리 선택대상 아님)
+  // 근거: 소득세법 제129조 — 16.5%는 국세(15%)+지방소득세(1.5%) 합산 실효세율이라 별도로 지방세를 더 가산하지 않음
   const excessOtherBase = dcExcessGain + personalExcess;
-  const excessOtherTax = excessOtherBase * 0.165;
-  const excessOtherTaxLocal = excessOtherTax * 0.1;
+  const taxOtherIncome = excessOtherBase * 0.165;
 
   // 한도이내 사적연금(퇴직연금 운용수익+개인연금, 국민연금 등 공적연금 제외)만 1500만원 판정·분리과세 선택 대상
   const privatePensionTotal = gainPart + personalWithinLimit;
@@ -356,11 +356,12 @@ function calcYear(year, params, dcPrincipalStart, dcGainStart, personalNonDeduct
   const earnedDed = earnedIncomeDeduction(earnedAnnual);
   const earnedIncome = Math.max(0, earnedAnnual - earnedDed);
 
+  // 종합과세 전액 선택 시 세액(국세 + 지방소득세 10%)
   const combinedBase = Math.max(0, pensionIncome + earnedIncome - 150 * params.dependents);
-  const taxGlobalAll = globalTax(combinedBase);
+  const taxGlobalAll = globalTax(combinedBase) * 1.1;
 
   // 사적연금 분리과세 대안세율: 1500만원 이하 확정기간형 기준 연령별 저율(55~69세 5.5%, 70~79세 4.4%, 80세이상 3.3%),
-  // 1500만원 초과분은 16.5%(2023년 개정, 지방세 포함)
+  // 1500만원 초과분은 16.5%(2023년 개정) — 모두 지방소득세 포함 실효세율이라 별도로 지방세를 더 가산하지 않음
   const sepRate = privatePensionTotal <= 1500
     ? (age >= 80 ? 0.033 : age >= 70 ? 0.044 : 0.055)
     : 0.165;
@@ -370,12 +371,24 @@ function calcYear(year, params, dcPrincipalStart, dcGainStart, personalNonDeduct
   const npsDed = pensionIncomeDeduction(npsAnnual);
   const npsIncome = Math.max(0, npsAnnual - npsDed);
   const altGlobalBase = Math.max(0, npsIncome + earnedIncome - 150 * params.dependents);
-  const taxAlt = globalTax(altGlobalBase) + sepTax;
+  const taxAltGlobal = globalTax(altGlobalBase) * 1.1; // 국민연금+근로소득 종합과세분(국세+지방세 10%)
+  const taxAlt = taxAltGlobal + sepTax; // + 사적연금 분리과세(이미 지방세 포함)
 
   const chosenGlobal = taxGlobalAll <= taxAlt;
-  const taxIncomeFinal = chosenGlobal ? taxGlobalAll : taxAlt;
-  const taxIncomeLocal = taxIncomeFinal * 0.1;
-  const totalIncomeTax = taxRetire + taxRetireLocal + taxIncomeFinal + taxIncomeLocal + excessOtherTax + excessOtherTaxLocal;
+
+  // 종합과세 세액을 근로소득/연금소득 귀속분으로 근사 안분(각 소득금액 비중 기준)
+  // 실제로는 근로+연금소득을 합산해 누진세율을 적용하는 구조라 소득원별로 정확히 분리되지 않으나,
+  // 항목별 표기를 위해 소득금액 비중에 비례 배분한 근사치임(합계는 항상 실제 세액과 일치)
+  const globalTaxTotal = chosenGlobal ? taxGlobalAll : taxAltGlobal;
+  const globalEarnedBase = earnedIncome;
+  const globalPensionBase = chosenGlobal ? pensionIncome : npsIncome;
+  const globalBaseSum = globalEarnedBase + globalPensionBase;
+  const taxEarned = globalBaseSum > 0 ? globalTaxTotal * (globalEarnedBase / globalBaseSum) : 0;
+  const taxPensionGlobal = globalTaxTotal - taxEarned;
+  const taxPrivateSep = chosenGlobal ? 0 : sepTax; // 종합과세 선택 시에는 사적연금도 종합과세에 합산되어 별도 분리과세 없음
+
+  const taxIncomeFinal = taxEarned + taxPensionGlobal + taxPrivateSep; // = chosenGlobal ? taxGlobalAll : taxAlt
+  const totalIncomeTax = taxRetire + taxRetireLocal + taxIncomeFinal + taxOtherIncome;
 
   let gongsiga;
   if (params.downsizeEnabled && year >= params.downsizeYear) {
@@ -428,8 +441,8 @@ function calcYear(year, params, dcPrincipalStart, dcGainStart, personalNonDeduct
     reverseMortgage: reverseMortgageAnnual,
     principalPart, gainPart,
     taxRetire: taxRetire + taxRetireLocal,
-    taxIncome: taxIncomeFinal + taxIncomeLocal,
-    excessOtherTax: excessOtherTax + excessOtherTaxLocal,
+    taxIncome: taxIncomeFinal,
+    taxEarned, taxPensionGlobal, taxPrivateSep, taxOtherIncome,
     dcLimit, dcExcess, personalLimit, personalExcess, dcPensionYear, personalPensionYear,
     chosenGlobal,
     nhisAnnual, nhisType,
@@ -487,6 +500,10 @@ function buildMonthly(yearResult, params) {
       unemployment: yearResult._monthUnemp[m - 1],
       taxRetire: yearResult.taxRetire / 12,
       taxIncome: yearResult.taxIncome / 12,
+      taxEarned: yearResult.taxEarned / 12,
+      taxPensionGlobal: yearResult.taxPensionGlobal / 12,
+      taxPrivateSep: yearResult.taxPrivateSep / 12,
+      taxOtherIncome: yearResult.taxOtherIncome / 12,
       nhis: yearResult._monthNhis[m - 1],
       nhisStatus: yearResult._monthStatus[m - 1],
       propTax: 0,
@@ -500,7 +517,7 @@ function buildMonthly(yearResult, params) {
   if (yearResult.jongbu > 0) months[11].jongbu = yearResult.jongbu;
   return months.map(r => {
     const income = r.dc + r.personal + r.nps + r.earned + r.unemployment + r.reverseMortgage;
-    const expense = r.taxRetire + r.taxIncome + r.nhis + r.propTax + r.jongbu;
+    const expense = r.taxRetire + r.taxIncome + r.taxOtherIncome + r.nhis + r.propTax + r.jongbu;
     return Object.assign(r, { income, expense, net: income - expense });
   });
 }

@@ -601,7 +601,8 @@ function setupChartHover() {
       ['근로소득', m.earned], ['실업급여', m.unemployment], ['주택연금', m.reverseMortgage]
     ]);
     const expBreak = breakdownStr([
-      ['퇴직소득세', m.taxRetire], ['종합/분리소득세', m.taxIncome],
+      ['퇴직소득세', m.taxRetire], ['근로소득세', m.taxEarned], ['연금소득세', m.taxPensionGlobal],
+      ['사적연금분리과세', m.taxPrivateSep], ['기타소득세', m.taxOtherIncome],
       ['건강보험', m.nhis], ['재산세', m.propTax], ['종부세', m.jongbu]
     ]);
 
@@ -675,7 +676,9 @@ function renderMonthlyTable(results) {
   html += `<tr><td><b>수입 합계</b></td>${months.map(m => `<td class="num pos-strong">${fmt(m.income)}</td>`).join('')}<td class="num pos-strong">${fmt(months.reduce((a, m) => a + m.income, 0))}</td></tr>`;
 
   const expDef = [
-    ['퇴직소득세+지방세', 'taxRetire'], ['종합/분리소득세+지방세', 'taxIncome'],
+    ['퇴직소득세+지방세', 'taxRetire'],
+    ['근로소득세(종합과세분)', 'taxEarned'], ['연금소득세(종합과세분)', 'taxPensionGlobal'],
+    ['사적연금 분리과세', 'taxPrivateSep'], ['기타소득세(한도초과)', 'taxOtherIncome'],
     ['건강보험+장기요양', 'nhis'], ['재산세', 'propTax'], ['종부세', 'jongbu']
   ];
   expDef.forEach(([label, key]) => {
@@ -729,6 +732,7 @@ function renderFootnote() {
     인출 시 세금 성격이 다른 재원은 비례배분이 아니라 <b>법정 순서(소득세법 시행령 제40조의3)</b>대로 소진됩니다: DC퇴직연금은 원금(이연퇴직소득)이 먼저, 운용수익이 나중에 인출되며, 개인연금은 세액공제 받지 않은 원금(비과세)이 먼저, 세액공제받은 원금+운용수익이 나중에 인출됩니다.
     DC퇴직연금 원금(이연퇴직소득) 부분의 이연퇴직소득세 감면율은 연금 실제 수령연차 10년 이하 30%, 10년 초과 40%이며, 별도 입력 없이 수령연차에 따라 자동으로 전환 적용됩니다.
     한도이내 사적연금소득(DC 운용수익+개인연금 과세대상분, 국민연금 제외)이 연 1,500만원 이하면 연령별 저율(55~69세 5.5%/70~79세 4.4%/80세이상 3.3%)로 분리과세되지만, 1,500만원을 단 1원이라도 초과하면 이 저율 혜택이 수령액 전체에서 사라지고 전액을 기준으로 16.5% 분리과세와 종합과세(6.6~49.5%) 중 유리한 쪽을 선택합니다.
+    월별 상세 테이블·그래프 툴팁·엑셀에서는 소득세를 <b>근로소득세·연금소득세(종합과세분)·사적연금 분리과세·기타소득세(한도초과)</b>로 나눠 표기합니다. 사적연금 분리과세와 기타소득세는 실제로 세율이 정해져 있어 정확한 금액이지만, 근로소득세·연금소득세는 근로소득과 연금소득을 합산해 하나의 누진세율로 계산하는 종합과세 구조상 소득원별로 법적으로 명확히 나뉘지 않아 <b>각 소득금액 비중에 비례해 근사 배분</b>한 값입니다(둘을 더하면 항상 실제 종합과세 산출세액과 일치).
     만 70세 이상에게 적용되는 <b>경로우대공제(연 100만원)</b>, 재취업 근로소득에 적용되는 <b>근로소득세액공제(총급여 구간별 연 20만~74만원)</b>와 <b>표준세액공제</b>는 월별 현금흐름에 미치는 영향이 작아 반영하지 않았습니다. 실제로는 이 금액만큼 세금이 더 낮아질 수 있습니다.
     <b>조기수령 중 재취업이 겹치는 달은 국민연금이 전액 지급정지</b>로 자동 반영됩니다(국민연금법 제63조). 다만 정상수령나이 도달 후 5년 이내 소득 있는 업무 종사 시의 부분 감액(제63조의2, 최대 50%)은 미반영입니다.
     각 입력 항목의 ⓘ 아이콘을 클릭하면 해당 항목의 상세 설명과 전제사항을 확인할 수 있습니다.
@@ -816,24 +820,26 @@ document.getElementById('btnExcel').onclick = () => {
   const rnd = (n) => Math.round(n || 0);
   const annualCols = [
     '연도', '나이', 'DC퇴직연금', '개인연금', '국민연금', '근로소득', '실업급여', '주택연금',
-    '퇴직소득세', '종합/분리소득세', '한도초과세', '건강보험+장기요양', '건보가입유형',
+    '퇴직소득세', '근로소득세', '연금소득세(종합과세분)', '사적연금분리과세', '기타소득세(한도초과)',
+    '건강보험+장기요양', '건보가입유형',
     '재산세', '종부세', '총세금공과금', '총수입', '세후순수입',
     'DC잔고(연말)', '개인연금잔고(연말)'
   ];
   const annualRows = currentResults.map(r => [
     r.year, r.age, rnd(r.dcAnnual), rnd(r.personalAnnual), rnd(r.npsAnnual), rnd(r.earned), rnd(r.unemployment), rnd(r.reverseMortgage),
-    rnd(r.taxRetire), rnd(r.taxIncome), rnd(r.excessOtherTax), rnd(r.nhisAnnual), r.nhisType,
+    rnd(r.taxRetire), rnd(r.taxEarned), rnd(r.taxPensionGlobal), rnd(r.taxPrivateSep), rnd(r.taxOtherIncome),
+    rnd(r.nhisAnnual), r.nhisType,
     rnd(r.propTax), rnd(r.jongbu), rnd(r.totalTaxAll), rnd(r.grossIncome), rnd(r.netIncome),
     rnd(r.dcBalanceEnd), rnd(r.personalBalanceEnd)
   ]);
   const wsAnnual = XLSX.utils.aoa_to_sheet([annualCols, ...annualRows]);
 
   const monthlyCols = ['연도', '월', 'DC퇴직연금', '개인연금', '국민연금', '근로소득', '실업급여', '주택연금',
-    '퇴직소득세', '종합소득세', '건강보험', '재산세', '종부세', '건보유형', '수입합계', '지출합계', '순현금흐름'];
+    '퇴직소득세', '근로소득세', '연금소득세', '사적연금분리과세', '기타소득세', '건강보험', '재산세', '종부세', '건보유형', '수입합계', '지출합계', '순현금흐름'];
   const series = buildFullMonthlySeries(currentResults, state);
   const monthlyRows = series.map(m => [
     m.year, m.month, rnd(m.dc), rnd(m.personal), rnd(m.nps), rnd(m.earned), rnd(m.unemployment), rnd(m.reverseMortgage),
-    rnd(m.taxRetire), rnd(m.taxIncome), rnd(m.nhis), rnd(m.propTax), rnd(m.jongbu), m.nhisStatus,
+    rnd(m.taxRetire), rnd(m.taxEarned), rnd(m.taxPensionGlobal), rnd(m.taxPrivateSep), rnd(m.taxOtherIncome), rnd(m.nhis), rnd(m.propTax), rnd(m.jongbu), m.nhisStatus,
     rnd(m.income), rnd(m.expense), rnd(m.net)
   ]);
   const wsMonthly = XLSX.utils.aoa_to_sheet([monthlyCols, ...monthlyRows]);
@@ -950,6 +956,7 @@ function buildReport() {
       <div>인출 재원은 비례배분이 아니라 법정 순서(소득세법 시행령 제40조의3)대로 소진됩니다: DC퇴직연금은 원금(이연퇴직소득)이 먼저·운용수익이 나중, 개인연금은 세액공제 받지 않은 원금(비과세)이 먼저·세액공제받은 원금+운용수익이 나중입니다.</div>
       <div>DC퇴직연금 원금(이연퇴직소득) 부분의 이연퇴직소득세 감면율은 연금 실제 수령연차 10년 이하 30%, 10년 초과 40%이며, 수령연차에 따라 자동 전환 적용됩니다.</div>
       <div>한도이내 사적연금소득(DC 운용수익+개인연금 과세대상분, 국민연금 제외)이 연 1,500만원 이하면 연령별 저율(55~69세 5.5%/70~79세 4.4%/80세이상 3.3%), 초과하면 전액 16.5%로 분리과세한 세액과 종합과세 세액 중 낮은 쪽이 자동 적용됩니다.</div>
+      <div>월별 상세 테이블·그래프 툴팁·엑셀에서는 소득세를 근로소득세·연금소득세(종합과세분)·사적연금 분리과세·기타소득세(한도초과)로 나눠 표기합니다. 사적연금 분리과세와 기타소득세는 세율이 정해져 있어 정확한 금액이지만, 근로소득세·연금소득세는 두 소득을 합산해 하나의 누진세율로 계산하는 종합과세 구조상 소득원별로 법적으로 명확히 나뉘지 않아 각 소득금액 비중에 비례해 근사 배분한 값입니다(합계는 항상 실제 산출세액과 일치).</div>
       <div>만 70세 이상에게 적용되는 경로우대공제(연 100만원), 재취업 근로소득에 적용되는 근로소득세액공제(총급여 구간별 연 20만~74만원)와 표준세액공제는 월별 현금흐름에 미치는 영향이 작아 반영하지 않았습니다. 실제로는 이 금액만큼 세금이 더 낮아질 수 있습니다.</div>
       <div>조기수령 중 재취업이 겹치는 달은 국민연금이 전액 지급정지로 자동 반영됩니다(국민연금법 제63조). 정상수령나이 도달 후 5년 이내 소득 있는 업무 종사 시의 부분 감액(제63조의2, 최대 50%)은 미반영입니다.</div>
       <div>실업급여(구직급여) 최대 수령기간은 법정 270일(9개월) 기준입니다.</div>
