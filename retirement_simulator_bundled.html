@@ -1875,10 +1875,10 @@ function buildReport() {
 
     <div class="rp-section-title">3. 연도별 현금흐름 상세</div>
     <table>
-      <tr><th>연도</th><th>나이</th><th>DC연금</th><th>개인연금</th><th>국민연금</th><th>근로소득</th><th>실업급여</th><th>퇴직소득세</th><th>종합/분리세</th><th>건보+장기요양</th><th>건보유형</th><th>재산세</th><th>종부세</th><th>총세금</th><th>총수입</th><th>세후순수입</th></tr>
+      <tr><th>연도</th><th>나이</th><th>DC연금</th><th>개인연금</th><th>국민연금</th><th>근로소득</th><th>실업급여</th><th>주택연금</th><th>퇴직소득세</th><th>종합/분리세</th><th>기타소득세</th><th>건보+장기요양</th><th>건보유형</th><th>재산세</th><th>종부세</th><th>총세금</th><th>총수입</th><th>세후순수입</th></tr>
       ${currentResults.map(r => `<tr>
         <td>${r.year}</td><td>${r.age}</td><td>${fmt(r.dcAnnual)}</td><td>${fmt(r.personalAnnual)}</td><td>${fmt(r.npsAnnual)}</td>
-        <td>${fmt(r.earned)}</td><td>${fmt(r.unemployment)}</td><td>${fmt(r.taxRetire)}</td><td>${fmt(r.taxIncome)}</td>
+        <td>${fmt(r.earned)}</td><td>${fmt(r.unemployment)}</td><td>${fmt(r.reverseMortgage)}</td><td>${fmt(r.taxRetire)}</td><td>${fmt(r.taxIncome)}</td><td>${fmt(r.taxOtherIncome)}</td>
         <td>${fmt(r.nhisAnnual)}</td><td>${r.nhisType}</td><td>${fmt(r.propTax)}</td><td>${fmt(r.jongbu)}</td>
         <td>${fmt(r.totalTaxAll)}</td><td>${fmt(r.grossIncome)}</td><td>${fmt(r.netIncome)}</td>
       </tr>`).join('')}
@@ -1889,8 +1889,10 @@ function buildReport() {
         <td>${fmt(currentResults.reduce((s, r) => s + r.npsAnnual, 0))}</td>
         <td>${fmt(currentResults.reduce((s, r) => s + r.earned, 0))}</td>
         <td>${fmt(currentResults.reduce((s, r) => s + r.unemployment, 0))}</td>
+        <td>${fmt(currentResults.reduce((s, r) => s + r.reverseMortgage, 0))}</td>
         <td>${fmt(currentResults.reduce((s, r) => s + r.taxRetire, 0))}</td>
         <td>${fmt(currentResults.reduce((s, r) => s + r.taxIncome, 0))}</td>
+        <td>${fmt(currentResults.reduce((s, r) => s + r.taxOtherIncome, 0))}</td>
         <td>${fmt(currentResults.reduce((s, r) => s + r.nhisAnnual, 0))}</td>
         <td>-</td>
         <td>${fmt(currentResults.reduce((s, r) => s + r.propTax, 0))}</td>
