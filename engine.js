@@ -340,7 +340,11 @@ function calcYear(year, params, dcPrincipalStart, dcGainStart, personalNonDeduct
   const earnedDed = earnedIncomeDeduction(earnedAnnual);
   const earnedIncome = Math.max(0, earnedAnnual - earnedDed);
 
-  const combinedBase = Math.max(0, pensionIncome + earnedIncome - 150 * params.dependents);
+  // 경로우대공제: 본인이 만 70세 이상이면 100만원 추가공제 (근거: 소득세법 제51조제1항제3호)
+  // 배우자 등 다른 인적공제 대상자의 생년은 입력받지 않아, 본인분만 반영합니다.
+  const elderlyDeduction = age >= 70 ? 100 : 0;
+
+  const combinedBase = Math.max(0, pensionIncome + earnedIncome - 150 * params.dependents - elderlyDeduction);
   const taxGlobalAll = globalTax(combinedBase);
 
   // 사적연금 분리과세 대안세율: 1500만원 이하 확정기간형 기준 연령별 저율(55~69세 5.5%, 70~79세 4.4%, 80세이상 3.3%),
@@ -353,7 +357,7 @@ function calcYear(year, params, dcPrincipalStart, dcGainStart, personalNonDeduct
   // 분리과세 선택 시에도 국민연금(공적연금)은 항상 종합과세 대상이라 근로소득과 합산
   const npsDed = pensionIncomeDeduction(npsAnnual);
   const npsIncome = Math.max(0, npsAnnual - npsDed);
-  const altGlobalBase = Math.max(0, npsIncome + earnedIncome - 150 * params.dependents);
+  const altGlobalBase = Math.max(0, npsIncome + earnedIncome - 150 * params.dependents - elderlyDeduction);
   const taxAlt = globalTax(altGlobalBase) + sepTax;
 
   const chosenGlobal = taxGlobalAll <= taxAlt;
