@@ -366,7 +366,7 @@ table.monthly tfoot td{
         <span><i style="background:var(--neutral-soft);border:1px solid var(--neutral);"></i>한도초과 과세 연도</span>
       </div>
       <div class="chart-wrap">
-        <canvas id="annualChart" height="280"></canvas>
+        <canvas id="annualChart" height="420"></canvas>
         <div class="chart-crosshair" id="chartCrosshair"></div>
         <div class="chart-tooltip" id="chartTooltip"></div>
       </div>
@@ -1357,11 +1357,19 @@ function renderKPI(results) {
 // ------------------------------------------------------------
 // 연도별 차트 (Canvas)
 // ------------------------------------------------------------
+// 월별 수입/지출 막대의 Y축 상한: 실제 최대값을 덮는 첫 고정 단계를 선택해 매번 눈금이 요동치지 않도록 함
+const CHART_AXIS_TIERS = [1000, 2000, 3000, 5000, 10000];
+function pickAxisTier(maxVal) {
+  const tier = CHART_AXIS_TIERS.find(t => t >= maxVal);
+  if (tier !== undefined) return tier;
+  return Math.ceil(maxVal / 10000) * 10000; // 1억원을 넘는 초고액 시나리오는 다음 1억원 단위로 올림
+}
+
 function renderChart(results) {
   const canvas = document.getElementById('annualChart');
   const dpr = window.devicePixelRatio || 1;
   const cssW = canvas.parentElement.clientWidth - 44;
-  const cssH = 280;
+  const cssH = 420;
   canvas.width = cssW * dpr;
   canvas.height = cssH * dpr;
   canvas.style.width = cssW + 'px';
@@ -1387,15 +1395,14 @@ function renderChart(results) {
 
   // 수입(바깥, 넓은 막대)과 지출(안쪽, 좁은 막대)을 같은 기준선(0)에서 겹쳐 그림.
   // 지출이 수입보다 크면 좁은 지출 막대가 넓은 수입 막대 위로 삐져나와 적자를 바로 보여줌.
+  // Y축 상한은 실제 최대값을 그대로 쓰지 않고 고정 단계(1000/2000/3000/5000/10000만원…)로 스냅해
+  // 입력값을 조금만 바꿔도 눈금이 흔들리지 않고 시나리오 간 비교가 쉽도록 함
   const barValues = [...incomes, ...expenses];
-  const sortedBars = [...barValues].sort((a, b) => a - b);
-  const p90Bar = sortedBars.length ? sortedBars[Math.floor(sortedBars.length * 0.9)] : 0;
-  let maxTop = Math.min(Math.max(...barValues, 0), Math.max(p90Bar * 1.4, 10));
-  maxTop = Math.max(maxTop, 10);
+  const maxTop = pickAxisTier(Math.max(...barValues, 0));
 
-  // 순현금흐름이 적자인 달만을 위한 하단 여백(막대 스케일을 짓누르지 않도록 상한 적용)
+  // 순현금흐름이 적자인 달만을 위한 하단 여백(적자는 항상 지출 이하이므로 maxTop을 넘지 않음)
   const deficits = nets.map(v => Math.max(0, -v));
-  let maxBottom = Math.min(Math.max(...deficits, 0), maxTop * 1.5);
+  const maxBottom = Math.min(Math.max(...deficits, 0), maxTop);
 
   const pxPerUnit = plotH / (maxTop + maxBottom);
   const zeroY = padT + maxTop * pxPerUnit;
