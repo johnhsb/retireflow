@@ -271,6 +271,15 @@ canvas{width:100%;display:block;}
   position:absolute;top:0;bottom:0;width:1px;background:var(--ink-faint);
   opacity:0;pointer-events:none;
 }
+.chart-year-highlight{
+  position:absolute;top:0;bottom:0;
+  background:rgba(169,118,44,0.12);
+  border-left:2px solid var(--accent);border-right:2px solid var(--accent);
+  opacity:0;pointer-events:none;
+  transition:opacity .15s ease, left .15s ease, width .15s ease;
+  z-index:1;
+}
+.chart-year-highlight.show{opacity:1;}
 .chart-crosshair.show{opacity:.5;}
 
 /* Monthly table */
@@ -367,6 +376,7 @@ table.monthly tfoot td{
       </div>
       <div class="chart-wrap">
         <canvas id="annualChart" height="420"></canvas>
+        <div class="chart-year-highlight" id="chartYearHighlight"></div>
         <div class="chart-crosshair" id="chartCrosshair"></div>
         <div class="chart-tooltip" id="chartTooltip"></div>
       </div>
@@ -1498,6 +1508,21 @@ function renderChart(results) {
   // 호버 인터랙션을 위한 좌표 정보 저장
   chartGeom = { padL, padT, plotW, plotH, xStep, series, cssW, cssH };
   setupChartHover();
+  updateChartYearHighlight();
+}
+
+// 월별 상세 테이블에서 선택한 연도가 그래프상 어느 구간인지 강조 표시
+function updateChartYearHighlight() {
+  const highlight = document.getElementById('chartYearHighlight');
+  if (!chartGeom) { highlight.classList.remove('show'); return; }
+  const { padL, xStep, series } = chartGeom;
+  const startIdx = series.findIndex(m => m.year === selectedYear);
+  if (startIdx === -1) { highlight.classList.remove('show'); return; }
+  let endIdx = startIdx;
+  while (endIdx + 1 < series.length && series[endIdx + 1].year === selectedYear) endIdx++;
+  highlight.style.left = (padL + xStep * startIdx) + 'px';
+  highlight.style.width = (xStep * (endIdx - startIdx + 1)) + 'px';
+  highlight.classList.add('show');
 }
 
 function breakdownStr(pairs) {
@@ -1646,6 +1671,8 @@ function renderMonthlyTable(results) {
   }
 
   // 목표소득 대비 안내 배너
+
+  updateChartYearHighlight();
 }
 
 function renderFootnote() {

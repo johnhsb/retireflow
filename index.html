@@ -271,6 +271,15 @@ canvas{width:100%;display:block;}
   position:absolute;top:0;bottom:0;width:1px;background:var(--ink-faint);
   opacity:0;pointer-events:none;
 }
+.chart-year-highlight{
+  position:absolute;top:0;bottom:0;
+  background:rgba(169,118,44,0.12);
+  border-left:2px solid var(--accent);border-right:2px solid var(--accent);
+  opacity:0;pointer-events:none;
+  transition:opacity .15s ease, left .15s ease, width .15s ease;
+  z-index:1;
+}
+.chart-year-highlight.show{opacity:1;}
 .chart-crosshair.show{opacity:.5;}
 
 /* Monthly table */
@@ -367,6 +376,7 @@ table.monthly tfoot td{
       </div>
       <div class="chart-wrap">
         <canvas id="annualChart" height="420"></canvas>
+        <div class="chart-year-highlight" id="chartYearHighlight"></div>
         <div class="chart-crosshair" id="chartCrosshair"></div>
         <div class="chart-tooltip" id="chartTooltip"></div>
       </div>

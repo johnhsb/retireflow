@@ -566,6 +566,21 @@ function renderChart(results) {
   // 호버 인터랙션을 위한 좌표 정보 저장
   chartGeom = { padL, padT, plotW, plotH, xStep, series, cssW, cssH };
   setupChartHover();
+  updateChartYearHighlight();
+}
+
+// 월별 상세 테이블에서 선택한 연도가 그래프상 어느 구간인지 강조 표시
+function updateChartYearHighlight() {
+  const highlight = document.getElementById('chartYearHighlight');
+  if (!chartGeom) { highlight.classList.remove('show'); return; }
+  const { padL, xStep, series } = chartGeom;
+  const startIdx = series.findIndex(m => m.year === selectedYear);
+  if (startIdx === -1) { highlight.classList.remove('show'); return; }
+  let endIdx = startIdx;
+  while (endIdx + 1 < series.length && series[endIdx + 1].year === selectedYear) endIdx++;
+  highlight.style.left = (padL + xStep * startIdx) + 'px';
+  highlight.style.width = (xStep * (endIdx - startIdx + 1)) + 'px';
+  highlight.classList.add('show');
 }
 
 function breakdownStr(pairs) {
@@ -714,6 +729,8 @@ function renderMonthlyTable(results) {
   }
 
   // 목표소득 대비 안내 배너
+
+  updateChartYearHighlight();
 }
 
 function renderFootnote() {
