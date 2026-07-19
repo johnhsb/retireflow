@@ -27,7 +27,8 @@ function globalTax(base) {
   if (base <= 15000) return base * 0.35 - 1544;
   if (base <= 30000) return base * 0.38 - 1994;
   if (base <= 50000) return base * 0.40 - 2594;
-  return base * 0.42 - 3594;
+  if (base <= 100000) return base * 0.42 - 3594;
+  return base * 0.45 - 6594; // 근거: 소득세법 제55조 — 과세표준 10억원 초과 구간(45%, 누진공제 6,594만원)
 }
 
 function propertyTaxCalc(gongsiga, fairRatio) {
@@ -367,7 +368,11 @@ function calcYear(year, params, dcPrincipalStart, dcGainStart, personalNonDeduct
     gongsiga = params.gongsigaStart * Math.pow(1 + infl, year - params.baseYear);
   }
 
-  const incomeForNhis = chosenGlobal ? Math.max(0, pensionIncome - 336) : 0;
+  // 건강보험료 지역가입자 소득보험료: 부과대상 연금소득은 공적연금(국민연금)만 해당하고 사적연금(DC운용수익·개인연금)은 제외되며,
+  // 소득세 종합/분리과세 선택과 무관하게 항상 반영됨. 연금소득공제 적용 전 총액 기준, 2024.9월 개편으로 반영비율 50%
+  // 근거: 국민건강보험법 시행령 제41조 [별표3]
+  const nhisPensionBase = npsAnnual * 0.5;
+  const incomeForNhis = Math.max(0, nhisPensionBase - 336);
   const monthlyIncomePremium = incomeForNhis / 12 * 0.0719; // 2026년 건강보험료율 7.19%
   const approxPropertyPremium = propertyInsurancePremium(gongsiga, 0.45);
   const regionMonthTotal = (monthlyIncomePremium + approxPropertyPremium) * 1.1314; // 장기요양 13.14%
@@ -383,8 +388,8 @@ function calcYear(year, params, dcPrincipalStart, dcGainStart, personalNonDeduct
   ];
 
   const propTax = propertyTaxCalc(gongsiga, 0.45);
-  const jongbuThreshold = 110000;
-  const jongbu = gongsiga <= jongbuThreshold ? 0 : (gongsiga - jongbuThreshold) * 0.45 * 0.006;
+  const jongbuThreshold = 120000; // 12억원 — 2023.1.1 이후 1세대1주택자 종부세 기본공제(구법 11억원에서 상향)
+  const jongbu = gongsiga <= jongbuThreshold ? 0 : (gongsiga - jongbuThreshold) * 0.6 * 0.006; // 종부세 공정시장가액비율 60%(재산세 1주택 특례 45%와는 별개 값)
 
   const isSaleYear = params.downsizeEnabled && year === params.downsizeYear; // 참고용 플래그(현금흐름에는 미반영)
 
