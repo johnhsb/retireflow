@@ -224,6 +224,7 @@ input,select{font-family:var(--sans);}
 .tl-seg.phase-voluntary{background:#E4ECE8;}
 .tl-seg.phase-region{background:var(--surface);}
 .tl-seg.phase-downsize{background:var(--negative-soft);}
+.tl-seg.phase-reversemortgage{background:var(--warning-soft);}
 .tl-seg.phase-nps{background:var(--positive-soft);}
 
 /* KPI cards */
@@ -335,7 +336,7 @@ table.monthly tfoot td{
 <header class="app-header">
   <div class="eyebrow">RETIREMENT CASH FLOW LEDGER</div>
   <h1>은퇴자산 현금흐름 시뮬레이터</h1>
-  <p>퇴직연금·개인연금·국민연금·재취업·실업급여·건강보험·주택 다운사이징까지 반영한 월별 현금흐름 추정 도구입니다. 좌측 변수를 조정하면 즉시 재계산됩니다.</p>
+  <p>퇴직연금·개인연금·국민연금·재취업·실업급여·건강보험·주택 다운사이징/주택연금까지 반영한 월별 현금흐름 추정 도구입니다. 좌측 변수를 조정하면 즉시 재계산됩니다.</p>
   <p class="privacy-note">모든 계산은 이 브라우저 안에서만 처리됩니다. 입력하신 정보는 외부 서버로 전송되거나 저장되지 않습니다.</p>
   <div class="toolbar">
     <button id="btnSave">설정 저장</button>
@@ -704,12 +705,17 @@ function calcYear(year, params, dcPrincipalStart, dcGainStart, personalNonDeduct
   // 근거: 국민연금법 제63조 — 정상수령나이 이후의 소득활동에 따른 감액(제63조의2, 최대 50%)은 별도이며 미반영
   const npsEarlySuspendApplies = npsAdjustYears < 0 && age < npsNormAge;
 
+  // ---- 주택연금(역모기지) 월지급금: 가입월부터 종신 지급되는 것으로 가정(사용자 입력액 그대로, 물가상승 미반영) ----
+  // 근거: 한국주택금융공사법 — 대출(비과세) 성격이라 소득세·건보료 부과대상 소득에는 포함하지 않음
+  const rmStartIdx = midx(params.reverseMortgageStartYear, params.reverseMortgageStartMonth);
+
   const monthlyWage = params.workEnabled ? params.workSalary / 12 : 0;
-  let earnedAnnual = 0, unemploymentAnnual = 0, npsAnnual = 0;
+  let earnedAnnual = 0, unemploymentAnnual = 0, npsAnnual = 0, reverseMortgageAnnual = 0;
   const monthStatus = [];
   const monthEarned = [];
   const monthUnemp = [];
   const monthNps = [];
+  const monthReverseMortgage = [];
   for (let m = 1; m <= 12; m++) {
     const employed = isEmployedMonth(year, m, params);
     const voluntary = isVoluntaryMonth(year, m, params);
@@ -717,13 +723,16 @@ function calcYear(year, params, dcPrincipalStart, dcGainStart, personalNonDeduct
     const e = employed ? params.workSalary / 12 : 0;
     const u = unemp ? params.unempMonthly : 0;
     const n = (npsEarlySuspendApplies && employed) ? 0 : npsMonthlyFull;
+    const rm = (params.reverseMortgageEnabled && midx(year, m) >= rmStartIdx) ? params.reverseMortgageMonthly : 0;
     monthEarned.push(e);
     monthUnemp.push(u);
     monthNps.push(n);
+    monthReverseMortgage.push(rm);
     monthStatus.push(employed ? 'work' : (voluntary ? 'voluntary' : 'region'));
     earnedAnnual += e;
     unemploymentAnnual += u;
     npsAnnual += n;
+    reverseMortgageAnnual += rm;
   }
   const isWorking = earnedAnnual > 0;
 
@@ -792,19 +801,29 @@ function calcYear(year, params, dcPrincipalStart, dcGainStart, personalNonDeduct
     Object.keys(counts).reduce((a, b) => counts[a] >= counts[b] ? a : b)
   ];
 
-  const propTax = propertyTaxCalc(gongsiga, 0.45);
+  const propTaxRaw = propertyTaxCalc(gongsiga, 0.45);
   const jongbuThreshold = 120000; // 12억원 — 2023.1.1 이후 1세대1주택자 종부세 기본공제(구법 11억원에서 상향)
   const jongbu = gongsiga <= jongbuThreshold ? 0 : (gongsiga - jongbuThreshold) * 0.6 * 0.006; // 종부세 공정시장가액비율 60%(재산세 1주택 특례 45%와는 별개 값)
+
+  // 주택연금 가입주택 재산세 25% 감면: 시가표준액 5억원 이하는 재산세 전액의 25%, 5억원 초과는 5억원 상당 재산세액의 25%까지만 감면(초과분은 감면 없음)
+  // 근거: 지방세특례제한법 제289조(2027.12.31까지 한시 적용) — 종합부동산세는 별도 감면 없음
+  let propTaxReduction = 0;
+  if (params.reverseMortgageEnabled && year >= params.reverseMortgageStartYear) {
+    const capBase = propertyTaxCalc(50000, 0.45).total;
+    propTaxReduction = Math.min(propTaxRaw.total, capBase) * 0.25;
+  }
+  const propTax = { ...propTaxRaw, total: propTaxRaw.total - propTaxReduction };
 
   const isSaleYear = params.downsizeEnabled && year === params.downsizeYear; // 참고용 플래그(현금흐름에는 미반영)
 
   const totalTaxAll = totalIncomeTax + nhisAnnual + propTax.total + jongbu;
-  const grossIncome = dcAnnual + personalAnnual + npsAnnual + earnedAnnual + unemploymentAnnual;
+  const grossIncome = dcAnnual + personalAnnual + npsAnnual + earnedAnnual + unemploymentAnnual + reverseMortgageAnnual;
   const netIncome = grossIncome - totalTaxAll;
 
   return {
     year, age,
     dcAnnual, personalAnnual, npsAnnual, earned: earnedAnnual, unemployment: unemploymentAnnual,
+    reverseMortgage: reverseMortgageAnnual,
     principalPart, gainPart,
     taxRetire: taxRetire + taxRetireLocal,
     taxIncome: taxIncomeFinal + taxIncomeLocal,
@@ -812,7 +831,7 @@ function calcYear(year, params, dcPrincipalStart, dcGainStart, personalNonDeduct
     dcLimit, dcExcess, personalLimit, personalExcess, dcPensionYear, personalPensionYear,
     chosenGlobal,
     nhisAnnual, nhisType,
-    propTax: propTax.total, jongbu,
+    propTax: propTax.total, propTaxReduction, jongbu,
     gongsiga,
     isWorking, isVoluntary: nhisType === '임의계속', isSaleYear,
     totalTaxAll, grossIncome, netIncome,
@@ -821,7 +840,8 @@ function calcYear(year, params, dcPrincipalStart, dcGainStart, personalNonDeduct
     personalBalanceEnd: personalNonDeductibleBalanceEnd + personalTaxableBalanceEnd,
     dcDepletedMonth: dcWalk.depletedMonth, personalDepletedMonth: personalWalk.depletedMonth,
     _monthStatus: monthStatus, _monthEarned: monthEarned, _monthUnemp: monthUnemp, _monthNhis: monthNhis,
-    _monthDc: dcWalk.monthlyActual, _monthPersonal: personalWalk.monthlyActual, _monthNps: monthNps
+    _monthDc: dcWalk.monthlyActual, _monthPersonal: personalWalk.monthlyActual, _monthNps: monthNps,
+    _monthReverseMortgage: monthReverseMortgage
   };
 }
 
@@ -860,6 +880,7 @@ function buildMonthly(yearResult, params) {
       dc: yearResult._monthDc[m - 1],
       personal: yearResult._monthPersonal[m - 1],
       nps: yearResult._monthNps[m - 1],
+      reverseMortgage: yearResult._monthReverseMortgage[m - 1],
       earned: yearResult._monthEarned[m - 1],
       unemployment: yearResult._monthUnemp[m - 1],
       taxRetire: yearResult.taxRetire / 12,
@@ -876,7 +897,7 @@ function buildMonthly(yearResult, params) {
   }
   if (yearResult.jongbu > 0) months[11].jongbu = yearResult.jongbu;
   return months.map(r => {
-    const income = r.dc + r.personal + r.nps + r.earned + r.unemployment;
+    const income = r.dc + r.personal + r.nps + r.earned + r.unemployment + r.reverseMortgage;
     const expense = r.taxRetire + r.taxIncome + r.nhis + r.propTax + r.jongbu;
     return Object.assign(r, { income, expense, net: income - expense });
   });
@@ -890,7 +911,6 @@ function buildFullMonthlySeries(results, params) {
   });
   return series;
 }
-
 </script>
 <script>
 // ============================================================
@@ -941,7 +961,12 @@ const DEFAULTS = {
 
   downsizeEnabled: false,
   downsizeYear: 2028,
-  downsizeTargetGongsiga: 0
+  downsizeTargetGongsiga: 0,
+
+  reverseMortgageEnabled: false,
+  reverseMortgageStartYear: 2028,
+  reverseMortgageStartMonth: 1,
+  reverseMortgageMonthly: 0
 };
 
 let state = Object.assign({}, DEFAULTS);
@@ -1054,14 +1079,22 @@ const SECTIONS = [
     ]
   },
   {
-    idx: '07', title: '주택 다운사이징',
+    idx: '07', title: '주택연금',
     fields: [
-      { key: 'downsizeEnabled', label: '다운사이징 반영 (재산세·건보료에만 반영, 양도차익/양도세는 현금흐름에 미포함)', type: 'checkbox',
-        help: '매도 시 발생하는 양도차익·양도소득세는 1회성 거액이라 월별 현금흐름 왜곡을 피하기 위해 의도적으로 제외했습니다. 재산세·종합부동산세·건강보험 재산분에만 반영됩니다.' },
+      { key: 'downsizeEnabled', label: '다운사이징 반영 (재산세·종부세·건보료에만 반영, 양도차익/양도세는 현금흐름에 미포함)', type: 'checkbox',
+        help: '매도 시 발생하는 양도차익·양도소득세는 1회성 거액이라 월별 현금흐름 왜곡을 피하기 위해 의도적으로 제외했습니다. 재산세·종합부동산세·건강보험 재산분에만 반영됩니다.\n아래 주택연금과 함께 켤 수 있습니다. 예: 먼저 다운사이징한 뒤 낮아진 집으로 주택연금에 가입하려면, 다운사이징 연도를 주택연금 가입 연도보다 앞선 시점으로 설정하세요. 그러면 주택연금 가입 연도부터는 다운사이징 후 공시가격 기준으로 재산세 감면이 계산됩니다.' },
       { key: 'downsizeYear', label: '다운사이징 연도', type: 'number', min: 2020, max: 2060,
         help: '이 연도부터 낮아진 공시가격 기준으로 재산세·종부세·건강보험 재산분이 재계산됩니다.' },
       { key: 'downsizeTargetGongsiga', label: '다운사이징 후 공시가격', type: 'number', unit: '만원',
-        help: '다운사이징 후 주택의 공시가격입니다.' }
+        help: '다운사이징 후 주택의 공시가격입니다.' },
+      { key: 'reverseMortgageEnabled', label: '주택연금(역모기지) 가입 반영', type: 'checkbox',
+        help: '집을 팔지 않고 담보로 제공한 뒤 매월 연금(대출)을 받는 방식입니다. 아래에서 입력한 월 수령액이 현금흐름에 더해지고, 가입 연도부터 재산세가 감면됩니다.\n위 다운사이징과 함께 켤 수 있습니다. 다운사이징을 먼저(더 이른 연도로) 설정해두면, 주택연금의 재산세 감면 계산도 다운사이징 후 낮아진 공시가격을 기준으로 자동 반영됩니다.\n근거: 한국주택금융공사법(주택연금), 지방세특례제한법 제289조(재산세 감면)' },
+      { key: 'reverseMortgageStartYear', label: '주택연금 가입 연도', type: 'number', min: 2020, max: 2060,
+        help: '이 연도·월부터 월 수령액이 지급되고 재산세 감면이 시작됩니다.' },
+      { key: 'reverseMortgageStartMonth', label: '주택연금 가입 월', type: 'number', min: 1, max: 12,
+        help: '주택연금 가입이 시작되는 월입니다.' },
+      { key: 'reverseMortgageMonthly', label: '주택연금 월 수령액', type: 'number', unit: '만원',
+        help: '한국주택금융공사 홈페이지의 "예상연금 조회"에서 확인한 월 지급금을 입력합니다(가입연령·주택가격·지급방식에 따라 달라져 자동계산하지 않습니다). 다운사이징 후에 가입하는 경우, 다운사이징된 주택가격을 기준으로 조회한 금액을 입력해야 합니다. 대출 성격이라 소득세·건강보험료 부과대상 소득에는 포함하지 않고 현금흐름에만 더합니다. 물가상승률에 따른 자동 인상은 반영하지 않습니다(지급방식에 따라 정액 또는 체증 등 다양하여 사용자가 조정 필요).\n[재산세 감면] 시가표준액 5억원 이하 주택은 재산세 25% 감면, 5억원 초과 주택은 5억원 상당 재산세액의 25%까지만 감면됩니다(1가구1주택자, 2027.12.31까지 한시 적용). 종합부동산세는 별도 감면이 없습니다.' }
     ]
   }
 ];
@@ -1261,8 +1294,9 @@ function renderTimeline(results) {
     let phase = 'phase-region', label = '지역가입';
     if (r.isWorking) { phase = 'phase-work'; label = '재취업'; }
     else if (r.isVoluntary) { phase = 'phase-voluntary'; label = '임의계속'; }
-    if (r.isSaleYear) { phase = 'phase-downsize'; label = '다운사이징'; }
-    if (r.npsAnnual > 0) { phase = 'phase-nps'; label = '국민연금'; }
+    if (r.reverseMortgage > 0) { phase = 'phase-reversemortgage'; label = '주택연금'; }
+    if (r.isSaleYear) { phase = 'phase-downsize'; label = r.reverseMortgage > 0 ? '다운사이징·주택연금' : '다운사이징'; }
+    if (r.npsAnnual > 0) { phase = 'phase-nps'; label = r.reverseMortgage > 0 ? '국민연금·주택연금' : '국민연금'; }
     seg.className = 'tl-seg ' + phase;
     seg.style.flex = '1';
     seg.title = `${r.year} (만 ${r.age}세) · ${label}`;
@@ -1472,7 +1506,7 @@ function setupChartHover() {
 
     const incBreak = breakdownStr([
       ['DC퇴직연금', m.dc], ['개인연금', m.personal], ['국민연금', m.nps],
-      ['근로소득', m.earned], ['실업급여', m.unemployment]
+      ['근로소득', m.earned], ['실업급여', m.unemployment], ['주택연금', m.reverseMortgage]
     ]);
     const expBreak = breakdownStr([
       ['퇴직소득세', m.taxRetire], ['종합/분리소득세', m.taxIncome],
@@ -1539,7 +1573,7 @@ function renderMonthlyTable(results) {
   const rowsDef = [
     ['DC퇴직연금', 'dc'], ['개인연금', 'personal'],
     ['국민연금', 'nps'],
-    ['근로소득', 'earned'], ['실업급여', 'unemployment']
+    ['근로소득', 'earned'], ['실업급여', 'unemployment'], ['주택연금', 'reverseMortgage']
   ];
   rowsDef.forEach(([label, key]) => {
     const vals = months.map(m => m[key]);
@@ -1592,7 +1626,8 @@ function renderFootnote() {
     본 도구는 한국 세법·건강보험료 산정방식을 근사화한 추정치를 제공하며, 실제 신고·부과액과 차이가 있을 수 있습니다.
     좌측의 모든 금액·나이·기간·주택가격은 사용자별로 자유롭게 입력해 자신의 시나리오에 맞게 사용할 수 있도록 설계되어 있습니다(예시값은 참고용 기본값일 뿐입니다).
     재산세·종합부동산세 계산은 <b>1세대1주택자</b> 특례(재산세 공정시장가액비율 45%, 종부세 공정시장가액비율 60%·기본공제 12억원)를 기준으로 하며, 다주택자에는 적용되지 않습니다.
-    주택 다운사이징은 <b>재산세·종합부동산세·건강보험 재산분에만 반영</b>됩니다. 매도 시 발생하는 양도차익·양도소득세는 1회성 거액이라 월별 현금흐름 왜곡을 피하기 위해 의도적으로 제외했습니다(다운사이징 연도부터 낮아진 공시가격 기준으로 세금·건보료만 계속 반영).
+주택 다운사이징과 주택연금(역모기지)은 <b>함께 반영할 수 있습니다</b>. 다운사이징은 <b>재산세·종합부동산세·건강보험 재산분에만 반영</b>됩니다. 매도 시 발생하는 양도차익·양도소득세는 1회성 거액이라 월별 현금흐름 왜곡을 피하기 위해 의도적으로 제외했습니다(다운사이징 연도부터 낮아진 공시가격 기준으로 세금·건보료만 계속 반영).
+    주택연금은 집을 팔지 않고 담보로 제공해 매월 대출 형태로 연금을 받는 방식으로, 입력한 <b>월 수령액이 그대로 현금흐름에 더해지고 소득세·건강보험료 부과대상 소득에는 포함되지 않습니다</b>. 정확한 월 지급액은 가입연령·주택가격·지급방식에 따라 달라지므로 한국주택금융공사 홈페이지의 예상연금 조회 결과를 직접 입력해야 하며, 물가상승에 따른 자동 인상은 반영하지 않습니다. 가입 시점부터 <b>재산세가 감면</b>됩니다: 시가표준액 5억원 이하는 재산세 전액의 25%, 5억원 초과는 5억원 상당 재산세액의 25%까지만 감면됩니다(1가구1주택자 대상, 2027.12.31까지 한시 적용, 종합부동산세는 별도 감면 없음). 두 항목을 함께 켜고 다운사이징 연도를 주택연금 가입 연도보다 앞서 설정하면, 주택연금 가입 이후의 재산세 감면도 다운사이징 후 낮아진 공시가격을 기준으로 자동 계산됩니다(월 수령액 자체는 다운사이징 후 주택가격 기준으로 사용자가 직접 조회해 입력해야 합니다).
     건강보험료 재산분(지역가입자)은 <b>공시가격 → 재산세 과세표준(45%) → 기본공제 1억원(2024.2월 개정) → 재산등급 점수표(60등급) → 점수당 금액(211.5원, 2026년 기준)</b> 순으로 자동 계산됩니다. 1~14등급은 시행령상 확인된 정확한 구간이며, 그 이상 고액 구간은 보건복지부 공식 예시로 보정한 근사 곡선을 사용해 소폭 오차가 있을 수 있습니다. 주택담보대출 등 부채공제는 반영하지 않았습니다.
     건강보험료 소득분(지역가입자)은 <b>공적연금(국민연금)소득만 대상</b>이며 사적연금(DC퇴직연금·개인연금)은 제외됩니다. 소득세 종합/분리과세 선택과 무관하게 항상 반영되고, 연 336만원을 공제한 뒤 50%만 소득으로 인정(2024.9월 개편)해 보험료율을 곱합니다.
     건강보험료율은 2026년 확정치 기준입니다: 직장가입자 7.19%(본인부담 3.595%), 지역가입자 소득분 7.19%, 장기요양보험료 건보료의 13.14%.
@@ -1688,24 +1723,24 @@ document.getElementById('btnExcel').onclick = () => {
   }
   const rnd = (n) => Math.round(n || 0);
   const annualCols = [
-    '연도', '나이', 'DC퇴직연금', '개인연금', '국민연금', '근로소득', '실업급여',
+    '연도', '나이', 'DC퇴직연금', '개인연금', '국민연금', '근로소득', '실업급여', '주택연금',
     '퇴직소득세', '종합/분리소득세', '한도초과세', '건강보험+장기요양', '건보가입유형',
     '재산세', '종부세', '총세금공과금', '총수입', '세후순수입',
     'DC잔고(연말)', '개인연금잔고(연말)'
   ];
   const annualRows = currentResults.map(r => [
-    r.year, r.age, rnd(r.dcAnnual), rnd(r.personalAnnual), rnd(r.npsAnnual), rnd(r.earned), rnd(r.unemployment),
+    r.year, r.age, rnd(r.dcAnnual), rnd(r.personalAnnual), rnd(r.npsAnnual), rnd(r.earned), rnd(r.unemployment), rnd(r.reverseMortgage),
     rnd(r.taxRetire), rnd(r.taxIncome), rnd(r.excessOtherTax), rnd(r.nhisAnnual), r.nhisType,
     rnd(r.propTax), rnd(r.jongbu), rnd(r.totalTaxAll), rnd(r.grossIncome), rnd(r.netIncome),
     rnd(r.dcBalanceEnd), rnd(r.personalBalanceEnd)
   ]);
   const wsAnnual = XLSX.utils.aoa_to_sheet([annualCols, ...annualRows]);
 
-  const monthlyCols = ['연도', '월', 'DC퇴직연금', '개인연금', '국민연금', '근로소득', '실업급여',
+  const monthlyCols = ['연도', '월', 'DC퇴직연금', '개인연금', '국민연금', '근로소득', '실업급여', '주택연금',
     '퇴직소득세', '종합소득세', '건강보험', '재산세', '종부세', '건보유형', '수입합계', '지출합계', '순현금흐름'];
   const series = buildFullMonthlySeries(currentResults, state);
   const monthlyRows = series.map(m => [
-    m.year, m.month, rnd(m.dc), rnd(m.personal), rnd(m.nps), rnd(m.earned), rnd(m.unemployment),
+    m.year, m.month, rnd(m.dc), rnd(m.personal), rnd(m.nps), rnd(m.earned), rnd(m.unemployment), rnd(m.reverseMortgage),
     rnd(m.taxRetire), rnd(m.taxIncome), rnd(m.nhis), rnd(m.propTax), rnd(m.jongbu), m.nhisStatus,
     rnd(m.income), rnd(m.expense), rnd(m.net)
   ]);
@@ -1770,6 +1805,7 @@ function buildReport() {
 
       <tr><th colspan="4">건강보험 · 주택</th></tr>
       <tr><td>임의계속가입 활용기간</td><td>${state.voluntaryMaxYears}년(재취업 1년↑ 시 자동적용)</td><td>다운사이징</td><td>${state.downsizeEnabled ? `${state.downsizeYear}년, 공시가 ${fmt(state.downsizeTargetGongsiga)}만원으로 조정` : '미반영'}</td></tr>
+      <tr><td>주택연금</td><td colspan="3">${state.reverseMortgageEnabled ? `${state.reverseMortgageStartYear}년 ${state.reverseMortgageStartMonth}월 가입, 월 ${fmt(state.reverseMortgageMonthly)}만원 수령` : '미반영'}</td></tr>
     </table>
 
     <div class="rp-section-title">2. 요약 (Executive Summary)</div>
@@ -1816,7 +1852,8 @@ function buildReport() {
       <div>건강보험료 소득분(지역가입자)은 공적연금(국민연금)소득만 대상이며 사적연금은 제외됩니다. 소득세 종합/분리과세 선택과 무관하게 항상 반영되고, 연 336만원 공제 후 50%만 소득으로 인정(2024.9월 개편)해 보험료율을 곱합니다.</div>
       <div>건강보험료율은 2026년 확정치 기준입니다: 직장가입자 7.19%(본인부담 3.595%), 지역가입자 소득분 7.19%, 장기요양보험료 건보료의 13.14%.</div>
       <div>연금수령한도(연초잔고÷(11-연금수령연차)×120%) 초과분은 감면 없는 세율(퇴직소득세 전체세율 또는 16.5% 기타소득세)이 적용됩니다.</div>
-      <div>주택 다운사이징은 재산세·종합부동산세·건강보험 재산분에만 반영되며, 양도차익·양도소득세는 1회성 거액이라 현금흐름에서 제외했습니다.</div>
+      <div>주택 다운사이징과 주택연금(역모기지)은 함께 반영할 수 있습니다. 다운사이징은 재산세·종합부동산세·건강보험 재산분에만 반영되며, 양도차익·양도소득세는 1회성 거액이라 현금흐름에서 제외했습니다.</div>
+      <div>주택연금은 집을 팔지 않고 담보로 제공해 매월 대출 형태로 연금을 받는 방식으로, 입력한 월 수령액이 현금흐름에 더해지고 소득세·건강보험료 부과대상 소득에는 포함되지 않습니다. 정확한 월 지급액은 한국주택금융공사 홈페이지의 예상연금 조회 결과를 직접 입력해야 하며 물가상승 자동 인상은 반영하지 않습니다. 가입 시점부터 재산세가 감면됩니다: 시가표준액 5억원 이하는 재산세 전액의 25%, 5억원 초과는 5억원 상당 재산세액의 25%까지만 감면됩니다(1가구1주택자, 2027.12.31까지 한시 적용, 종부세는 별도 감면 없음). 다운사이징을 함께 켜고 다운사이징 연도를 주택연금 가입 연도보다 앞서 설정하면, 주택연금 재산세 감면도 다운사이징 후 낮아진 공시가격을 기준으로 계산됩니다.</div>
       <div>DC퇴직연금·개인연금은 계좌 잔고에서 매월 인출 후 남은 잔액에 운용수익률이 복리로 적용되며, 잔고 소진 시 이후 수령액은 0으로 반영됩니다.</div>
       <div>인출 재원은 비례배분이 아니라 법정 순서(소득세법 시행령 제40조의3)대로 소진됩니다: DC퇴직연금은 원금(이연퇴직소득)이 먼저·운용수익이 나중, 개인연금은 세액공제 받지 않은 원금(비과세)이 먼저·세액공제받은 원금+운용수익이 나중입니다.</div>
       <div>DC퇴직연금 원금(이연퇴직소득) 부분의 이연퇴직소득세 감면율은 연금 실제 수령연차 10년 이하 30%, 10년 초과 40%이며, 수령연차에 따라 자동 전환 적용됩니다.</div>
@@ -1833,7 +1870,6 @@ function buildReport() {
 
 renderSidebar();
 recalc();
-
 </script>
 </body>
 </html>

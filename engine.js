@@ -307,12 +307,17 @@ function calcYear(year, params, dcPrincipalStart, dcGainStart, personalNonDeduct
   // 근거: 국민연금법 제63조 — 정상수령나이 이후의 소득활동에 따른 감액(제63조의2, 최대 50%)은 별도이며 미반영
   const npsEarlySuspendApplies = npsAdjustYears < 0 && age < npsNormAge;
 
+  // ---- 주택연금(역모기지) 월지급금: 가입월부터 종신 지급되는 것으로 가정(사용자 입력액 그대로, 물가상승 미반영) ----
+  // 근거: 한국주택금융공사법 — 대출(비과세) 성격이라 소득세·건보료 부과대상 소득에는 포함하지 않음
+  const rmStartIdx = midx(params.reverseMortgageStartYear, params.reverseMortgageStartMonth);
+
   const monthlyWage = params.workEnabled ? params.workSalary / 12 : 0;
-  let earnedAnnual = 0, unemploymentAnnual = 0, npsAnnual = 0;
+  let earnedAnnual = 0, unemploymentAnnual = 0, npsAnnual = 0, reverseMortgageAnnual = 0;
   const monthStatus = [];
   const monthEarned = [];
   const monthUnemp = [];
   const monthNps = [];
+  const monthReverseMortgage = [];
   for (let m = 1; m <= 12; m++) {
     const employed = isEmployedMonth(year, m, params);
     const voluntary = isVoluntaryMonth(year, m, params);
@@ -320,13 +325,16 @@ function calcYear(year, params, dcPrincipalStart, dcGainStart, personalNonDeduct
     const e = employed ? params.workSalary / 12 : 0;
     const u = unemp ? params.unempMonthly : 0;
     const n = (npsEarlySuspendApplies && employed) ? 0 : npsMonthlyFull;
+    const rm = (params.reverseMortgageEnabled && midx(year, m) >= rmStartIdx) ? params.reverseMortgageMonthly : 0;
     monthEarned.push(e);
     monthUnemp.push(u);
     monthNps.push(n);
+    monthReverseMortgage.push(rm);
     monthStatus.push(employed ? 'work' : (voluntary ? 'voluntary' : 'region'));
     earnedAnnual += e;
     unemploymentAnnual += u;
     npsAnnual += n;
+    reverseMortgageAnnual += rm;
   }
   const isWorking = earnedAnnual > 0;
 
@@ -395,19 +403,29 @@ function calcYear(year, params, dcPrincipalStart, dcGainStart, personalNonDeduct
     Object.keys(counts).reduce((a, b) => counts[a] >= counts[b] ? a : b)
   ];
 
-  const propTax = propertyTaxCalc(gongsiga, 0.45);
+  const propTaxRaw = propertyTaxCalc(gongsiga, 0.45);
   const jongbuThreshold = 120000; // 12억원 — 2023.1.1 이후 1세대1주택자 종부세 기본공제(구법 11억원에서 상향)
   const jongbu = gongsiga <= jongbuThreshold ? 0 : (gongsiga - jongbuThreshold) * 0.6 * 0.006; // 종부세 공정시장가액비율 60%(재산세 1주택 특례 45%와는 별개 값)
+
+  // 주택연금 가입주택 재산세 25% 감면: 시가표준액 5억원 이하는 재산세 전액의 25%, 5억원 초과는 5억원 상당 재산세액의 25%까지만 감면(초과분은 감면 없음)
+  // 근거: 지방세특례제한법 제289조(2027.12.31까지 한시 적용) — 종합부동산세는 별도 감면 없음
+  let propTaxReduction = 0;
+  if (params.reverseMortgageEnabled && year >= params.reverseMortgageStartYear) {
+    const capBase = propertyTaxCalc(50000, 0.45).total;
+    propTaxReduction = Math.min(propTaxRaw.total, capBase) * 0.25;
+  }
+  const propTax = { ...propTaxRaw, total: propTaxRaw.total - propTaxReduction };
 
   const isSaleYear = params.downsizeEnabled && year === params.downsizeYear; // 참고용 플래그(현금흐름에는 미반영)
 
   const totalTaxAll = totalIncomeTax + nhisAnnual + propTax.total + jongbu;
-  const grossIncome = dcAnnual + personalAnnual + npsAnnual + earnedAnnual + unemploymentAnnual;
+  const grossIncome = dcAnnual + personalAnnual + npsAnnual + earnedAnnual + unemploymentAnnual + reverseMortgageAnnual;
   const netIncome = grossIncome - totalTaxAll;
 
   return {
     year, age,
     dcAnnual, personalAnnual, npsAnnual, earned: earnedAnnual, unemployment: unemploymentAnnual,
+    reverseMortgage: reverseMortgageAnnual,
     principalPart, gainPart,
     taxRetire: taxRetire + taxRetireLocal,
     taxIncome: taxIncomeFinal + taxIncomeLocal,
@@ -415,7 +433,7 @@ function calcYear(year, params, dcPrincipalStart, dcGainStart, personalNonDeduct
     dcLimit, dcExcess, personalLimit, personalExcess, dcPensionYear, personalPensionYear,
     chosenGlobal,
     nhisAnnual, nhisType,
-    propTax: propTax.total, jongbu,
+    propTax: propTax.total, propTaxReduction, jongbu,
     gongsiga,
     isWorking, isVoluntary: nhisType === '임의계속', isSaleYear,
     totalTaxAll, grossIncome, netIncome,
@@ -424,7 +442,8 @@ function calcYear(year, params, dcPrincipalStart, dcGainStart, personalNonDeduct
     personalBalanceEnd: personalNonDeductibleBalanceEnd + personalTaxableBalanceEnd,
     dcDepletedMonth: dcWalk.depletedMonth, personalDepletedMonth: personalWalk.depletedMonth,
     _monthStatus: monthStatus, _monthEarned: monthEarned, _monthUnemp: monthUnemp, _monthNhis: monthNhis,
-    _monthDc: dcWalk.monthlyActual, _monthPersonal: personalWalk.monthlyActual, _monthNps: monthNps
+    _monthDc: dcWalk.monthlyActual, _monthPersonal: personalWalk.monthlyActual, _monthNps: monthNps,
+    _monthReverseMortgage: monthReverseMortgage
   };
 }
 
@@ -463,6 +482,7 @@ function buildMonthly(yearResult, params) {
       dc: yearResult._monthDc[m - 1],
       personal: yearResult._monthPersonal[m - 1],
       nps: yearResult._monthNps[m - 1],
+      reverseMortgage: yearResult._monthReverseMortgage[m - 1],
       earned: yearResult._monthEarned[m - 1],
       unemployment: yearResult._monthUnemp[m - 1],
       taxRetire: yearResult.taxRetire / 12,
@@ -479,7 +499,7 @@ function buildMonthly(yearResult, params) {
   }
   if (yearResult.jongbu > 0) months[11].jongbu = yearResult.jongbu;
   return months.map(r => {
-    const income = r.dc + r.personal + r.nps + r.earned + r.unemployment;
+    const income = r.dc + r.personal + r.nps + r.earned + r.unemployment + r.reverseMortgage;
     const expense = r.taxRetire + r.taxIncome + r.nhis + r.propTax + r.jongbu;
     return Object.assign(r, { income, expense, net: income - expense });
   });
