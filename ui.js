@@ -311,6 +311,7 @@ function applyBirthYear(newBirthYear) {
     state[k] = derived[k];
     syncFieldInput(k);
   });
+  selectedYear = derived.startYear;
 }
 
 // 필드 하나를 기본값으로 되돌림
