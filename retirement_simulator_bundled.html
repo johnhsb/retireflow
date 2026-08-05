@@ -373,6 +373,7 @@ table.monthly tfoot td{
         <span><i style="background:#D9853F"></i>총세금·공과금</span>
         <span><i style="background:#3D7AB8"></i>세후 순현금흐름</span>
         <span><i style="background:var(--neutral-soft);border:1px solid var(--neutral);"></i>한도초과 과세 연도</span>
+        <span><i style="background:var(--accent-soft);border:1px solid var(--accent);"></i>월별 현금흐름 표 출력연도</span>
       </div>
       <div class="chart-wrap">
         <canvas id="annualChart" height="420"></canvas>
@@ -944,37 +945,48 @@ function buildFullMonthlySeries(results, params) {
 // UI 렌더링 & 상태 관리
 // ============================================================
 
+// 생년에 종속된 파생 기본값: 정년(만60세) 12월말 퇴직 -> 만61세부터 20년간 시뮬레이션 -> DC/개인연금·재취업·다운사이징·주택연금은 그 해(만61세)를 기본 시작연도로 사용
+// 생년을 바꾸는 것은 완전히 다른 사람을 가정하는 것이므로, 아래 필드는 생년이 바뀔 때마다 사용자가 직접 수정했었는지와 무관하게 항상 이 공식으로 재계산된다.
+function birthYearDerivedDefaults(birthYear) {
+  const startYear = birthYear + 61; // 만 61세가 되는 해
+  return {
+    startYear,
+    endYear: startYear + 19,
+    dcStartYear: startYear,
+    dcStartMonth: 1,
+    personalStartYear: startYear,
+    personalStartMonth: 1,
+    workStartYear: startYear,
+    workEndYear: startYear,
+    downsizeYear: startYear,
+    reverseMortgageStartYear: startYear
+  };
+}
+const BIRTHYEAR_DERIVED_KEYS = Object.keys(birthYearDerivedDefaults(1967));
+
 const DEFAULTS = {
   birthYear: 1967,
   dependents: 1,
-  baseYear: 2027,
-  startYear: 2028,
-  endYear: 2040,
+  baseYear: new Date().getFullYear(), // 앱 실행 시점의 현재 연도
   inflation: 2.7,
 
   dcPrincipal: 0,
   dcGain: 0,
   dcMonthly: 0,
   dcReturnRate: 0,
-  dcStartYear: 2028,
-  dcStartMonth: 1,
   serviceYears: 1,
 
   personalMonthly: 0,
   personalBalance: 0,
   personalNonDeductiblePrincipal: 0,
   personalReturnRate: 0,
-  personalStartYear: 2028,
-  personalStartMonth: 1,
 
   npsEnabled: false,
   npsNormal63: 0,
   npsAdjustYears: 0,
 
   workEnabled: false,
-  workStartYear: 2028,
   workStartMonth: 1,
-  workEndYear: 2028,
   workEndMonth: 12,
   workSalary: 0,
 
@@ -987,16 +999,19 @@ const DEFAULTS = {
   gongsigaStart: 0,
 
   downsizeEnabled: false,
-  downsizeYear: 2028,
   downsizeTargetGongsiga: 0,
 
   reverseMortgageEnabled: false,
-  reverseMortgageStartYear: 2028,
   reverseMortgageStartMonth: 1,
   reverseMortgageMonthly: 0
 };
 
-let state = Object.assign({}, DEFAULTS);
+// 필드의 "기본값"을 조회: 생년 파생 필드는 현재 state.birthYear 기준으로 매번 계산, 나머지는 DEFAULTS 고정값
+function defaultOf(key, s) {
+  return BIRTHYEAR_DERIVED_KEYS.includes(key) ? birthYearDerivedDefaults(s.birthYear)[key] : DEFAULTS[key];
+}
+
+let state = Object.assign({}, DEFAULTS, birthYearDerivedDefaults(DEFAULTS.birthYear));
 let currentResults = [];
 let selectedYear = state.startYear;
 
@@ -1012,19 +1027,23 @@ const SECTIONS = [
     idx: '01', title: '기본 정보', open: true,
     fields: [
       { key: 'birthYear', label: '생년(년)', type: 'number', min: 1950, max: 1990, step: 1,
-        help: '만 나이 계산과 국민연금 수령 개시 연령 판정의 기준이 됩니다.' },
+        note: (s) => {
+          const d = birthYearDerivedDefaults(s.birthYear);
+          return `자동계산: 정년(만60세) ${s.birthYear + 60}년 12월 퇴직 → 시뮬레이션 ${d.startYear}~${d.endYear}년(만61세부터 20년) → 연금 개시 ${d.dcStartYear}년 1월. 재취업·다운사이징·주택연금 시작연도 기본값도 ${d.startYear}년으로 함께 맞춰집니다.`;
+        },
+        help: '만 나이 계산과 국민연금 수령 개시 연령 판정의 기준이 됩니다.\n생년을 바꾸면 완전히 다른 사람을 가정하는 것으로 간주해, 시뮬레이션 시작·종료연도, DC퇴직연금·개인연금 수령개시연도/월, 재취업 시작·종료연도, 다운사이징 연도, 주택연금 가입연도(총 10개 필드)가 "정년 만60세 12월 퇴직 → 만61세부터 20년간 시뮬레이션, 연금·재취업·다운사이징·주택연금은 만61세부터 시작" 공식으로 항상 자동 재계산됩니다. 해당 필드들을 직접 수정해두었더라도 생년을 바꾸면 그 값은 덮어써집니다.' },
       { key: 'dependents', label: '인적공제 대상자 수(본인 포함)', type: 'range', min: 1, max: 6, step: 1, unit: '명',
         help: '종합소득세 계산 시 적용되는 인적공제 대상자 수입니다(본인 포함).\n근거: 소득세법 제50조(인적공제)\n산출: 종합소득금액 - (150만원 × 인원수) = 과세표준\n참고: 만 70세 이상에게 적용되는 경로우대공제(소득세법 제51조, 1인당 연 100만원)는 월별 현금흐름에 미치는 영향이 작아 이 시뮬레이터에는 반영하지 않았습니다. 실제로는 이 금액만큼 세금이 더 낮아질 수 있습니다.' },
       { key: 'startYear', label: '시뮬레이션 시작연도', type: 'number', min: 2020, max: 2050, step: 1,
-        help: '현금흐름을 계산할 기간의 시작연도입니다.' },
+        help: '현금흐름을 계산할 기간의 시작연도입니다.\n생년으로부터 "정년(만60세) 12월 퇴직 → 만61세부터 20년간" 공식으로 자동계산된 값이 기본으로 채워지며, 직접 수정할 수 있습니다. 단, 생년을 다시 바꾸면 이 값은 새 공식값으로 덮어써집니다.' },
       { key: 'endYear', label: '시뮬레이션 종료연도', type: 'number', min: 2020, max: 2060, step: 1,
-        help: '현금흐름을 계산할 기간의 종료연도입니다. 시작연도보다 빠르면 계산되지 않습니다.' },
+        help: '현금흐름을 계산할 기간의 종료연도입니다. 시작연도보다 빠르면 계산되지 않습니다.\n생년 기준 자동계산값(시작연도+19년)이 기본으로 채워지며, 직접 수정할 수 있습니다. 단, 생년을 다시 바꾸면 이 값은 새 공식값으로 덮어써집니다.' },
       { key: 'inflation', label: '물가상승률', type: 'range', min: 0, max: 6, step: 0.1, unit: '%',
         help: '국민연금의 매년 자동 인상분과 미래 공시가격 추정에 사용되는 연평균 물가상승률입니다.' },
       { key: 'gongsigaStart', label: '주택 공시가격 — 재산세·건보료 산정용', type: 'number', unit: '만원',
         help: '재산세·종합부동산세·건강보험 재산분 계산의 공통 기준입니다.\n[재산세] 근거: 지방세법 제110·111조 / 산출: 공시가격×45%(과세표준) → 구간별 세율(6천만원 이하 0.1%~3억 초과 0.4%) + 도시지역분·지방교육세 가산\n[종부세] 근거: 종합부동산세법 제8·9조 / 산출: (공시가격-12억원)×60%×0.6% 근사 계산. 실제는 0.5~2.7% 누진세율과 고령자·장기보유 세액공제(최대 80%)가 있어 코드 값보다 실제 부담이 낮을 수 있습니다.\n[건보 재산분] 근거: 국민건강보험법 시행령 제42조 별표4 / 산출: 공시가격×45%-1억원(기본공제) → 재산등급 점수표(60등급) → 점수당 211.5원(2026년)\n※ 공시가 9억원 이하 1세대1주택 재산세 특례세율(0.05~0.35%)은 미반영되어 실제보다 다소 높게 산정될 수 있습니다.' },
       { key: 'baseYear', label: '공시가격 기준연도', type: 'number', min: 2020, max: 2040, step: 1,
-        help: '위 주택 공시가격이 어느 연도 기준 금액인지 지정합니다. 이후 연도의 공시가격은 물가상승률로 추정합니다. 근속연수·연금개시 시점 등 다른 계산과는 무관합니다.' }
+        help: '위 주택 공시가격이 어느 연도 기준 금액인지 지정합니다. 이후 연도의 공시가격은 물가상승률로 추정합니다. 근속연수·연금개시 시점 등 다른 계산과는 무관합니다.\n앱을 실행한 시점의 현재 연도가 기본값으로 채워집니다(생년과는 무관하며, 생년을 바꿔도 유지됩니다).' }
     ]
   },
   {
@@ -1035,9 +1054,9 @@ const SECTIONS = [
       { key: 'dcGain', label: 'DC 운용수익', type: 'number', unit: '만원',
         help: '원금을 초과해 발생한 운용수익 부분입니다.\n근거: 소득세법 제20조의3(연금소득)·제47조의2(연금소득공제)·제64조의4·제129조(원천징수세율)\n산출: 한도이내 사적연금소득(이 항목+개인연금 과세대상분, 국민연금 제외) 합계가 연 1,500만원 이하면 연령별 저율(55~69세 5.5%/70~79세 4.4%/80세이상 3.3%, 지방세 포함)로, 1,500만원 초과면 전액 16.5%로 분리과세한 세액과 종합과세 세액을 비교해 더 낮은 쪽을 자동 적용합니다. 종합과세 선택 시 연금소득공제(최대 900만원 한도)를 차감한 금액이 과세대상입니다.' },
       { key: 'dcStartYear', label: 'DC 수령개시 연도', type: 'number', min: 2020, max: 2060,
-        help: 'DC퇴직연금 수령을 시작하는 시점입니다.\n근거: 소득세법 시행령 제40조의2(연금수령한도)\n산출: 연금수령한도 = 연초잔고 ÷ (11-연금수령연차) × 120% (11년차부터 한도 없음). 한도 초과분은 감면 없는 세율이 적용됩니다.' },
+        help: 'DC퇴직연금 수령을 시작하는 시점입니다.\n근거: 소득세법 시행령 제40조의2(연금수령한도)\n산출: 연금수령한도 = 연초잔고 ÷ (11-연금수령연차) × 120% (11년차부터 한도 없음). 한도 초과분은 감면 없는 세율이 적용됩니다.\n생년 기준 자동계산값(정년 다음해)이 기본으로 채워지며, 직접 수정할 수 있습니다. 단, 생년을 다시 바꾸면 이 값은 새 공식값으로 덮어써집니다.' },
       { key: 'dcStartMonth', label: 'DC 수령개시 월', type: 'number', min: 1, max: 12,
-        help: 'DC퇴직연금 수령을 시작하는 월입니다.' },
+        help: 'DC퇴직연금 수령을 시작하는 월입니다.\n생년 기준 자동계산값(1월)이 기본으로 채워지며, 직접 수정할 수 있습니다. 단, 생년을 다시 바꾸면 이 값은 새 공식값으로 덮어써집니다.' },
       { key: 'dcMonthly', label: 'DC 월 수령액(목표)', type: 'range', min: 0, max: 1000, step: 10, unit: '만원',
         help: '매월 인출을 희망하는 금액입니다. 계좌 잔고가 부족해지면 인출 가능한 만큼만 자동으로 축소됩니다.' },
       { key: 'dcReturnRate', label: 'DC 계좌 연 운용수익률', type: 'range', min: -5, max: 10, step: 0.1, unit: '%',
@@ -1054,9 +1073,9 @@ const SECTIONS = [
       { key: 'personalNonDeductiblePrincipal', label: '위 잔고 중 세액공제 받지 않은 원금', type: 'number', unit: '만원',
         help: '연금저축·IRP 세액공제 한도(연 900만원, 2026년 기준)를 초과해 납입했거나 세액공제를 받지 않은 원금입니다. 해당 없으면 0으로 두세요.\n근거: 소득세법 시행령 제40조의3(연금계좌 인출순서)\n산출: 인출 시 이 금액이 가장 먼저(비과세로) 소진되고, 그 다음부터 세액공제받은 원금+운용수익이 인출되어 연금소득세(한도이내 저율/한도초과 16.5%) 대상이 됩니다. 전체 잔고보다 큰 값을 입력하면 전체 잔고로 제한됩니다.' },
       { key: 'personalStartYear', label: '개인연금 수령개시 연도', type: 'number', min: 2020, max: 2060,
-        help: '개인연금 수령을 시작하는 연도입니다.\n근거: 소득세법 시행령 제40조의2(연금수령한도) — DC퇴직연금과 동일한 산식이 적용됩니다.\n산출: 연금수령한도 = 연초잔고 ÷ (11-연금수령연차) × 120%' },
+        help: '개인연금 수령을 시작하는 연도입니다.\n근거: 소득세법 시행령 제40조의2(연금수령한도) — DC퇴직연금과 동일한 산식이 적용됩니다.\n산출: 연금수령한도 = 연초잔고 ÷ (11-연금수령연차) × 120%\n생년 기준 자동계산값(정년 다음해)이 기본으로 채워지며, 직접 수정할 수 있습니다. 단, 생년을 다시 바꾸면 이 값은 새 공식값으로 덮어써집니다.' },
       { key: 'personalStartMonth', label: '개인연금 수령개시 월', type: 'number', min: 1, max: 12,
-        help: '개인연금 수령을 시작하는 월입니다.' },
+        help: '개인연금 수령을 시작하는 월입니다.\n생년 기준 자동계산값(1월)이 기본으로 채워지며, 직접 수정할 수 있습니다. 단, 생년을 다시 바꾸면 이 값은 새 공식값으로 덮어써집니다.' },
       { key: 'personalMonthly', label: '개인연금 월수령액(목표)', type: 'range', min: 0, max: 500, step: 10, unit: '만원',
         help: '매월 인출을 희망하는 금액입니다. 계좌 잔고가 부족해지면 인출 가능한 만큼만 자동으로 축소됩니다.' },
       { key: 'personalReturnRate', label: '개인연금 계좌 연 운용수익률', type: 'range', min: -5, max: 10, step: 0.1, unit: '%',
@@ -1081,11 +1100,11 @@ const SECTIONS = [
       { key: 'workEnabled', label: '재취업 반영', type: 'checkbox',
         help: '체크하지 않으면 재취업 기간의 근로소득이 반영되지 않습니다.' },
       { key: 'workStartYear', label: '재취업 시작 연도', type: 'number', min: 2020, max: 2060,
-        help: '재취업 근무 시작 연도입니다. 임의계속가입 자격(12개월 이상 재직) 판정에도 사용됩니다.' },
+        help: '재취업 근무 시작 연도입니다. 임의계속가입 자격(12개월 이상 재직) 판정에도 사용됩니다.\n생년 기준 자동계산값(만61세가 되는 해)이 기본으로 채워지며, 직접 수정할 수 있습니다. 단, 생년을 다시 바꾸면 이 값은 새 공식값으로 덮어써집니다.' },
       { key: 'workStartMonth', label: '재취업 시작 월', type: 'number', min: 1, max: 12,
         help: '재취업 근무 시작 월입니다.' },
       { key: 'workEndYear', label: '재취업 종료 연도', type: 'number', min: 2020, max: 2060,
-        help: '재취업 근무 종료 연도입니다. 이 다음 달부터 실업급여·임의계속가입이 시작될 수 있습니다.' },
+        help: '재취업 근무 종료 연도입니다. 이 다음 달부터 실업급여·임의계속가입이 시작될 수 있습니다.\n생년 기준 자동계산값(만61세가 되는 해)이 기본으로 채워지며, 직접 수정할 수 있습니다. 단, 생년을 다시 바꾸면 이 값은 새 공식값으로 덮어써집니다.' },
       { key: 'workEndMonth', label: '재취업 종료 월', type: 'number', min: 1, max: 12,
         help: '재취업 근무 종료 월입니다.' },
       { key: 'workSalary', label: '재취업 연봉', type: 'range', min: 0, max: 12000, step: 100, unit: '만원',
@@ -1111,13 +1130,13 @@ const SECTIONS = [
       { key: 'downsizeEnabled', label: '다운사이징 반영 (재산세·종부세·건보료에만 반영, 양도차익/양도세는 현금흐름에 미포함)', type: 'checkbox',
         help: '매도 시 발생하는 양도차익·양도소득세는 1회성 거액이라 월별 현금흐름 왜곡을 피하기 위해 의도적으로 제외했습니다. 재산세·종합부동산세·건강보험 재산분에만 반영됩니다.\n아래 주택연금과 함께 켤 수 있습니다. 예: 먼저 다운사이징한 뒤 낮아진 집으로 주택연금에 가입하려면, 다운사이징 연도를 주택연금 가입 연도보다 앞선 시점으로 설정하세요. 그러면 주택연금 가입 연도부터는 다운사이징 후 공시가격 기준으로 재산세 감면이 계산됩니다.' },
       { key: 'downsizeYear', label: '다운사이징 연도', type: 'number', min: 2020, max: 2060,
-        help: '이 연도부터 낮아진 공시가격 기준으로 재산세·종부세·건강보험 재산분이 재계산됩니다.' },
+        help: '이 연도부터 낮아진 공시가격 기준으로 재산세·종부세·건강보험 재산분이 재계산됩니다.\n생년 기준 자동계산값(만61세가 되는 해)이 기본으로 채워지며, 직접 수정할 수 있습니다. 단, 생년을 다시 바꾸면 이 값은 새 공식값으로 덮어써집니다.' },
       { key: 'downsizeTargetGongsiga', label: '다운사이징 후 공시가격', type: 'number', unit: '만원',
         help: '다운사이징 후 주택의 공시가격입니다.' },
       { key: 'reverseMortgageEnabled', label: '주택연금(역모기지) 가입 반영', type: 'checkbox',
         help: '집을 팔지 않고 담보로 제공한 뒤 매월 연금(대출)을 받는 방식입니다. 아래에서 입력한 월 수령액이 현금흐름에 더해지고, 가입 연도부터 재산세가 감면됩니다.\n위 다운사이징과 함께 켤 수 있습니다. 다운사이징을 먼저(더 이른 연도로) 설정해두면, 주택연금의 재산세 감면 계산도 다운사이징 후 낮아진 공시가격을 기준으로 자동 반영됩니다.\n근거: 한국주택금융공사법(주택연금), 지방세특례제한법 제289조(재산세 감면)' },
       { key: 'reverseMortgageStartYear', label: '주택연금 가입 연도', type: 'number', min: 2020, max: 2060,
-        help: '이 연도·월부터 월 수령액이 지급되고 재산세 감면이 시작됩니다.' },
+        help: '이 연도·월부터 월 수령액이 지급되고 재산세 감면이 시작됩니다.\n생년 기준 자동계산값(만61세가 되는 해)이 기본으로 채워지며, 직접 수정할 수 있습니다. 단, 생년을 다시 바꾸면 이 값은 새 공식값으로 덮어써집니다.' },
       { key: 'reverseMortgageStartMonth', label: '주택연금 가입 월', type: 'number', min: 1, max: 12,
         help: '주택연금 가입이 시작되는 월입니다.' },
       { key: 'reverseMortgageMonthly', label: '주택연금 월 수령액', type: 'number', unit: '만원',
@@ -1157,18 +1176,19 @@ function renderSidebar() {
       const field = document.createElement('div');
       const infoBtn = f.help ? `<button type="button" class="info-icon" id="h_${f.key}" aria-label="설명 보기">ⓘ</button>` : '';
       const resetBtn = `<button type="button" class="reset-icon" id="r_${f.key}" style="display:none" aria-label="기본값으로 되돌리기" title="기본값으로 되돌리기">↺</button>`;
+      const noteHtml = f.note ? `<div class="field-note" id="n_${f.key}">${f.note(state)}</div>` : '';
       if (f.type === 'checkbox') {
         field.className = 'checkbox-row';
         field.innerHTML = `<input type="checkbox" id="f_${f.key}" ${state[f.key] ? 'checked' : ''}><span>${f.label}</span>${infoBtn}${resetBtn}`;
       } else if (f.type === 'range') {
         field.className = 'field';
-        const noteHtml = f.note ? `<div class="field-note" id="n_${f.key}">${f.note(state)}</div>` : '';
         field.innerHTML = `<label>${f.label}${infoBtn}${resetBtn} <span class="val" id="v_${f.key}">${state[f.key]}${f.unit || ''}</span></label>
           ${noteHtml}
           <input type="range" id="f_${f.key}" min="${f.min}" max="${f.max}" step="${f.step}" value="${state[f.key]}">`;
       } else {
         field.className = 'field';
         field.innerHTML = `<label>${f.label}${infoBtn}${resetBtn}${f.unit ? ' <span class="val">(' + f.unit + ')</span>' : ''}</label>
+          ${noteHtml}
           <input type="${f.type}" id="f_${f.key}" value="${state[f.key]}" ${f.min !== undefined ? 'min=' + f.min : ''} ${f.max !== undefined ? 'max=' + f.max : ''}>`;
       }
       body.appendChild(field);
@@ -1187,7 +1207,8 @@ function renderSidebar() {
       if (f.type === 'checkbox') v = el.checked;
       else if (f.type === 'range' || f.type === 'number') v = parseFloat(el.value);
       else v = el.value;
-      state[f.key] = v;
+      if (f.key === 'birthYear') applyBirthYear(v);
+      else state[f.key] = v;
       if (f.type === 'range') {
         document.getElementById('v_' + f.key).textContent = v + (f.unit || '');
       }
@@ -1204,9 +1225,41 @@ function renderSidebar() {
   updateResetUI();
 }
 
+// 필드 정의를 key로 조회 (SECTIONS 전체에서 검색)
+function findFieldDef(key) {
+  for (const sec of SECTIONS) {
+    const f = sec.fields.find(x => x.key === key);
+    if (f) return f;
+  }
+  return null;
+}
+
+// state[key] 변경을 해당 필드의 DOM 입력에도 반영 (사용자 조작 없이 값이 바뀔 때 사용)
+function syncFieldInput(key) {
+  const f = findFieldDef(key);
+  const el = document.getElementById('f_' + key);
+  if (!f || !el) return;
+  el.value = state[key];
+  if (f.type === 'range') {
+    const v = document.getElementById('v_' + key);
+    if (v) v.textContent = state[key] + (f.unit || '');
+  }
+}
+
+// 생년 변경 = 완전히 다른 사람을 가정하는 것이므로, 생년 파생 6개 필드를 사용자가 직접 수정했는지와 무관하게 항상 새 공식값으로 재설정
+function applyBirthYear(newBirthYear) {
+  state.birthYear = newBirthYear;
+  const derived = birthYearDerivedDefaults(newBirthYear);
+  BIRTHYEAR_DERIVED_KEYS.forEach(k => {
+    state[k] = derived[k];
+    syncFieldInput(k);
+  });
+}
+
 // 필드 하나를 기본값으로 되돌림
 function resetField(f) {
-  state[f.key] = DEFAULTS[f.key];
+  if (f.key === 'birthYear') applyBirthYear(defaultOf('birthYear', state));
+  else state[f.key] = defaultOf(f.key, state);
   const el = document.getElementById('f_' + f.key);
   if (f.type === 'checkbox') el.checked = state[f.key];
   else el.value = state[f.key];
@@ -1228,7 +1281,7 @@ function updateResetUI() {
   SECTIONS.forEach((sec, si) => {
     let sectionChanged = false;
     sec.fields.forEach(f => {
-      const changed = state[f.key] !== DEFAULTS[f.key];
+      const changed = state[f.key] !== defaultOf(f.key, state);
       if (changed) sectionChanged = true;
       const btn = document.getElementById('r_' + f.key);
       if (btn) btn.style.display = changed ? 'inline-flex' : 'none';
