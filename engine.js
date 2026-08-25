@@ -296,12 +296,14 @@ function calcYear(year, params, dcPrincipalStart, dcGainStart, personalNonDeduct
   const npsNormAge = npsNormalAge(params.birthYear);
   const npsStartAge = npsNormAge + npsAdjustYears;
   if (params.npsEnabled && age >= npsStartAge) {
-    const yrsSinceStart = age - npsStartAge;
+    // npsNormal63은 정상수령나이 시점 기준 명목값이므로, 물가상승 복리는 실제개시연령이 아닌
+    // 정상수령나이로부터 경과한 연수를 기준으로 적용해야 조기/연기 조정률과 정합된다.
+    const yrsSinceNormal = age - npsNormAge;
     const adjustFactor = npsAdjustYears >= 0
       ? 1 + 0.072 * npsAdjustYears   // 연기수령: 연 7.2% 가산
       : 1 - 0.06 * Math.abs(npsAdjustYears); // 조기수령: 연 6% 감액
     const npsBase = params.npsNormal63 * Math.max(0, adjustFactor);
-    npsMonthlyFull = npsBase * Math.pow(1 + infl, yrsSinceStart);
+    npsMonthlyFull = npsBase * Math.pow(1 + infl, yrsSinceNormal);
   }
   // 조기노령연금 지급정지: 정상수령나이 도달 전(조기수령 중)에 소득 있는 업무(재취업)에 종사하는 달은 국민연금 전액 지급정지
   // 근거: 국민연금법 제63조 — 정상수령나이 이후의 소득활동에 따른 감액(제63조의2, 최대 50%)은 별도이며 미반영
