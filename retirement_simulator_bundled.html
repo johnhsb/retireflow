@@ -446,7 +446,7 @@ function propertyTaxCalc(gongsiga, fairRatio) {
   if (base <= 6000) prop = base * 0.001;
   else if (base <= 15000) prop = 6 + (base - 6000) * 0.0015;
   else if (base <= 30000) prop = 19.5 + (base - 15000) * 0.0025;
-  else prop = 63 + (base - 30000) * 0.004;
+  else prop = 57 + (base - 30000) * 0.004; // 3억원 구간 경계(19.5+(30000-15000)*0.0025=57)와 연속되도록 누진 기준액을 57로 계산
   const city = base * 0.0014;
   const edu = prop * 0.2;
   return { prop, city, edu, total: prop + city + edu };
@@ -801,9 +801,12 @@ function calcYear(year, params, dcPrincipalStart, dcGainStart, personalNonDeduct
   const taxIncomeFinal = taxEarned + taxPensionGlobal + taxPrivateSep; // = chosenGlobal ? taxGlobalAll : taxAlt
   const totalIncomeTax = taxRetire + taxRetireLocal + taxIncomeFinal + taxOtherIncome;
 
+  // downsizeTargetGongsiga도 gongsigaStart와 동일하게 baseYear(오늘) 기준 명목값으로 취급한다.
+  // downsizeYear 기준으로 환산하면, downsizeYear가 baseYear보다 이른 해(이미 만61세를 넘긴 시뮬레이션 등)일 때
+  // 두 필드 다 "오늘 기준 가격"을 넣어도 다운사이징 후 금액이 더 많은 물가상승분을 얹어 오히려 더 커지는 문제가 있었다.
   let gongsiga;
   if (params.downsizeEnabled && year >= params.downsizeYear) {
-    gongsiga = params.downsizeTargetGongsiga * Math.pow(1 + infl, year - params.downsizeYear);
+    gongsiga = params.downsizeTargetGongsiga * Math.pow(1 + infl, year - params.baseYear);
   } else {
     gongsiga = params.gongsigaStart * Math.pow(1 + infl, year - params.baseYear);
   }
@@ -1133,8 +1136,8 @@ const SECTIONS = [
         help: '매도 시 발생하는 양도차익·양도소득세는 1회성 거액이라 월별 현금흐름 왜곡을 피하기 위해 의도적으로 제외했습니다. 재산세·종합부동산세·건강보험 재산분에만 반영됩니다.\n아래 주택연금과 함께 켤 수 있습니다. 예: 먼저 다운사이징한 뒤 낮아진 집으로 주택연금에 가입하려면, 다운사이징 연도를 주택연금 가입 연도보다 앞선 시점으로 설정하세요. 그러면 주택연금 가입 연도부터는 다운사이징 후 공시가격 기준으로 재산세 감면이 계산됩니다.' },
       { key: 'downsizeYear', label: '다운사이징 연도', type: 'number', min: 2020, max: 2060,
         help: '이 연도부터 낮아진 공시가격 기준으로 재산세·종부세·건강보험 재산분이 재계산됩니다.\n생년 기준 자동계산값(만61세가 되는 해)이 기본으로 채워지며, 직접 수정할 수 있습니다. 단, 생년을 다시 바꾸면 이 값은 새 공식값으로 덮어써집니다.' },
-      { key: 'downsizeTargetGongsiga', label: '다운사이징 후 공시가격', type: 'number', unit: '만원',
-        help: '다운사이징 후 주택의 공시가격입니다.' },
+      { key: 'downsizeTargetGongsiga', label: '다운사이징 후 공시가격(현재가로 입력)', type: 'number', unit: '만원',
+        help: '다운사이징 후 주택의 공시가격입니다. 위 "주택 공시가격"과 마찬가지로 오늘(공시가격 기준연도) 기준 가격을 입력하세요 — 다운사이징 연도가 아닌 기준연도부터 물가상승률을 반영해 자동으로 미래 시점 금액으로 환산됩니다.' },
       { key: 'reverseMortgageEnabled', label: '주택연금(역모기지) 가입 반영', type: 'checkbox',
         help: '집을 팔지 않고 담보로 제공한 뒤 매월 연금(대출)을 받는 방식입니다. 아래에서 입력한 월 수령액이 현금흐름에 더해지고, 가입 연도부터 재산세가 감면됩니다.\n위 다운사이징과 함께 켤 수 있습니다. 다운사이징을 먼저(더 이른 연도로) 설정해두면, 주택연금의 재산세 감면 계산도 다운사이징 후 낮아진 공시가격을 기준으로 자동 반영됩니다.\n근거: 한국주택금융공사법(주택연금), 지방세특례제한법 제289조(재산세 감면)' },
       { key: 'reverseMortgageStartYear', label: '주택연금 가입 연도', type: 'number', min: 2020, max: 2060,

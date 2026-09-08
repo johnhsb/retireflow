@@ -37,7 +37,7 @@ function propertyTaxCalc(gongsiga, fairRatio) {
   if (base <= 6000) prop = base * 0.001;
   else if (base <= 15000) prop = 6 + (base - 6000) * 0.0015;
   else if (base <= 30000) prop = 19.5 + (base - 15000) * 0.0025;
-  else prop = 63 + (base - 30000) * 0.004;
+  else prop = 57 + (base - 30000) * 0.004; // 3억원 구간 경계(19.5+(30000-15000)*0.0025=57)와 연속되도록 누진 기준액을 57로 계산
   const city = base * 0.0014;
   const edu = prop * 0.2;
   return { prop, city, edu, total: prop + city + edu };
@@ -392,9 +392,12 @@ function calcYear(year, params, dcPrincipalStart, dcGainStart, personalNonDeduct
   const taxIncomeFinal = taxEarned + taxPensionGlobal + taxPrivateSep; // = chosenGlobal ? taxGlobalAll : taxAlt
   const totalIncomeTax = taxRetire + taxRetireLocal + taxIncomeFinal + taxOtherIncome;
 
+  // downsizeTargetGongsiga도 gongsigaStart와 동일하게 baseYear(오늘) 기준 명목값으로 취급한다.
+  // downsizeYear 기준으로 환산하면, downsizeYear가 baseYear보다 이른 해(이미 만61세를 넘긴 시뮬레이션 등)일 때
+  // 두 필드 다 "오늘 기준 가격"을 넣어도 다운사이징 후 금액이 더 많은 물가상승분을 얹어 오히려 더 커지는 문제가 있었다.
   let gongsiga;
   if (params.downsizeEnabled && year >= params.downsizeYear) {
-    gongsiga = params.downsizeTargetGongsiga * Math.pow(1 + infl, year - params.downsizeYear);
+    gongsiga = params.downsizeTargetGongsiga * Math.pow(1 + infl, year - params.baseYear);
   } else {
     gongsiga = params.gongsigaStart * Math.pow(1 + infl, year - params.baseYear);
   }
